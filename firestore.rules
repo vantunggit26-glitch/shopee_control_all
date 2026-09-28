@@ -1,0 +1,150 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users/{userId}/accounts/{accountId}
+// Document ID: Firestore-generated ID
+// Fields:
+//   - name: string (required, 1-300 characters)
+//   - status: string (required, one of the eight allowed account statuses)
+//   - note: string (optional, 0-1000 characters)
+//   - trackingCode: string (optional, 0-100 characters)
+//   - createdAt: timestamp (required, immutable)
+//   - updatedAt: timestamp (required, server-managed)
+//
+// Collection: users/{userId}/credentials/{credentialId}
+// Document ID: Firestore-generated ID
+// Fields:
+//   - siteName: string (required, 1-100 characters)
+//   - url: string (required, 1-2048 characters, HTTP/HTTPS only)
+//   - username: string (required, 1-320 characters)
+//   - password: string (required, 1-500 characters)
+//   - createdAt: timestamp (required, immutable)
+//   - updatedAt: timestamp (required, server-managed)
+//
+// Accounts and credentials belong to the authenticated user identified by
+// userId. Credential documents contain private plaintext data and are never
+// readable by other users.
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // =============================================================
+    // Helper Functions
+    // =============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Account documents intentionally contain no UID field; ownership comes
+    // exclusively from the user-scoped document path.
+    function uidUnchanged() {
+      return !('uid' in request.resource.data);
+    }
+
+    function uidNotModified() {
+      return !('uid' in request.resource.data) && !('uid' in resource.data);
+    }
+
+    function hasRequiredFields(data, fields) {
+      return data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(data, fields) {
+      return data.keys().hasOnly(fields);
+    }
+
+    function isValidOptionalString(data, field, maxLength) {
+      return !(field in data)
+        || (data[field] is string && data[field].size() <= maxLength);
+    }
+
+    // =============================================================
+    // Domain Validator
+    // =============================================================
+
+    function isValidAccount(data) {
+      return hasRequiredFields(data, ['name', 'status', 'createdAt', 'updatedAt'])
+        && hasOnlyAllowedFields(data, ['name', 'status', 'note', 'trackingCode', 'createdAt', 'updatedAt'])
+        && data.name is string
+        && data.name.size() >= 1
+        && data.name.size() <= 300
+        && data.status is string
+        && data.status in [
+          'Tài khoản mới',
+          'Tài khoản shopee mới',
+          'Đang đặt đơn',
+          'Đã sử dụng shopee',
+          'Đã khóa mã người mới',
+          'Đã khóa M02',
+          'Đã khóa M04',
+          'Đã khóa F02'
+        ]
+        && isValidOptionalString(data, 'note', 1000)
+        && isValidOptionalString(data, 'trackingCode', 100)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCredential(data) {
+      return hasRequiredFields(data, ['siteName', 'url', 'username', 'password', 'createdAt', 'updatedAt'])
+        && hasOnlyAllowedFields(data, ['siteName', 'url', 'username', 'password', 'createdAt', 'updatedAt'])
+        && data.siteName is string
+        && data.siteName.size() >= 1
+        && data.siteName.size() <= 100
+        && data.url is string
+        && data.url.size() >= 1
+        && data.url.size() <= 2048
+        && (data.url.matches('^https://.*') || data.url.matches('^http://.*'))
+        && data.username is string
+        && data.username.size() >= 1
+        && data.username.size() <= 320
+        && data.password is string
+        && data.password.size() >= 1
+        && data.password.size() <= 500
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    match /users/{userId}/accounts/{accountId} {
+      allow read: if isOwner(userId);
+
+      allow create: if isOwner(userId)
+        && uidUnchanged()
+        && isValidAccount(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isOwner(userId)
+        && uidNotModified()
+        && isValidAccount(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if isOwner(userId);
+    }
+
+    match /users/{userId}/credentials/{credentialId} {
+      allow read: if isOwner(userId);
+
+      allow create: if isOwner(userId)
+        && uidUnchanged()
+        && isValidCredential(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if isOwner(userId);
+
+      // Credential edits are not supported; replace the record instead.
+    }
+
+    // All other paths are denied by default.
+  }
+}

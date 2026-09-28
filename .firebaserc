@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "account-vault-tung"
+  },
+  "targets": {
+    "account-vault-tung": {
+      "hosting": {
+        "app": [
+          "shopeetung"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}
