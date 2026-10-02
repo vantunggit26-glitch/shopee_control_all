@@ -462,6 +462,140 @@
   column-gap: 16px;
 }
 
+.discounts-welcome {
+  align-items: center;
+}
+
+.discount-form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  column-gap: 16px;
+}
+
+.discount-alert {
+  margin-bottom: 20px;
+}
+
+.discount-type-filter {
+  min-width: 190px;
+}
+
+.telegram-welcome {
+  align-items: center;
+}
+
+.telegram-stat-card {
+  min-width: 170px;
+}
+
+.telegram-info-alert,
+.telegram-error-alert {
+  margin-bottom: 20px;
+}
+
+.telegram-filter-select {
+  min-width: 190px;
+}
+
+.telegram-search-input {
+  width: 280px;
+}
+
+.telegram-message-cell {
+  min-width: 260px;
+}
+
+.telegram-message-cell .ant-typography {
+  margin: 7px 0 0;
+  white-space: pre-wrap;
+}
+
+.public-main-nav {
+  min-width: 330px;
+}
+
+.products-welcome {
+  align-items: center;
+}
+
+.product-form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.product-form-grid .ant-form-item {
+  margin-bottom: 0;
+}
+
+.product-source-alert,
+.product-error-alert {
+  margin-bottom: 20px;
+}
+
+.product-cell {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.product-image {
+  width: 72px;
+  height: 72px;
+  flex: 0 0 72px;
+  border: 1px solid #edf0f5;
+  border-radius: 11px;
+  background: #fafbff;
+  object-fit: cover;
+}
+
+.product-image-placeholder {
+  display: grid;
+  place-items: center;
+  color: #a9b2c3;
+  font-size: 24px;
+}
+
+.product-main-info,
+.product-price-cell {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.product-main-info {
+  gap: 5px;
+}
+
+.product-main-info > a {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #17233c;
+  font-weight: 600;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.product-main-info > .ant-typography,
+.product-price-cell > .ant-typography-secondary {
+  font-size: 12px;
+}
+
+.product-price-cell {
+  gap: 4px;
+}
+
+.product-rating-icon {
+  color: #faad14;
+}
+
+.product-search-input {
+  width: 300px;
+}
+
 .website-avatar {
   color: #08979c;
   background: #e6fffb;
@@ -551,6 +685,18 @@
     grid-template-columns: 1fr;
   }
 
+  .discount-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .product-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .product-form-grid .ant-form-item {
+    margin-bottom: 12px;
+  }
+
   .panel-card .ant-card-head {
     padding: 0 18px;
   }
@@ -568,12 +714,19 @@
 
   .table-card .ant-card-head-title,
   .table-card .ant-card-extra,
-  .search-input {
+  .search-input,
+  .product-search-input {
     width: 100%;
   }
 
   .table-card .ant-card-extra > .ant-space,
-  .status-filter-select {
+  .status-filter-select,
+  .discount-type-filter {
+    width: 100%;
+  }
+
+  .telegram-search-input,
+  .telegram-filter-select {
     width: 100%;
   }
 

@@ -24,9 +24,47 @@ rules_version = '2';
 //   - createdAt: timestamp (required, immutable)
 //   - updatedAt: timestamp (required, server-managed)
 //
+// Collection: discountCodes/{discountCodeId}
+// Document ID: Firestore-generated ID
+// Fields:
+//   - code: string (required, 1-100 characters)
+//   - type: string (required, one of the three allowed discount code types)
+//   - createdAt: timestamp (required, immutable, server-managed)
+//
+// Collection: products/{shopId_itemId}
+// Document ID: deterministic shopId_itemId
+// Fields:
+//   - itemId: integer (required, 1-999999999999)
+//   - shopId: integer (required, 1-999999999999)
+//   - productName: string (required, 1-500 characters)
+//   - shopName: string (required, 1-200 characters)
+//   - productLink: string (required, 1-2048 characters, Shopee HTTPS URL)
+//   - imageUrl: string (required, 0-2048 characters, empty or HTTPS URL)
+//   - category: string (required, 0-300 characters)
+//   - price/minPrice/maxPrice/commission: number (required, 0-1000000000000)
+//   - sales: integer (required, 0-1000000000000)
+//   - rating: number (required, 0-5)
+//   - totalRatePercent: number (required, 0-100)
+//   - isXtra: boolean (required)
+//   - sourceUpdatedAt: string (required, 0-50 characters)
+//   - createdAt: timestamp (required, immutable, server-managed)
+//   - updatedAt: timestamp (required, server-managed)
+//
+// Collection: todo/{chatId_messageId}
+// Documents are created only by the trusted Telegram automation through the
+// Firebase Admin SDK. Authenticated app users may read them, while every client
+// create/update/delete operation is denied. Relevant fields include:
+//   - text: string
+//   - messageDate/expiresAt/createdAt: timestamp
+//   - containsNewUserKeyword: boolean
+//   - detectedCodes/links: list
+//   - sourceLink/messageDay/chatTitle: string
+//
 // Accounts and credentials belong to the authenticated user identified by
 // userId. Credential documents contain private plaintext data and are never
-// readable by other users.
+// readable by other users. Discount codes and products contain no private user
+// data and are intentionally public to read; only the fixed administrator can
+// write them.
 // ===============================================================
 
 service cloud.firestore {
@@ -41,6 +79,11 @@ service cloud.firestore {
 
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated()
+        && request.auth.token.email == 'tungtv@account.com';
     }
 
     // Account documents intentionally contain no UID field; ownership comes
@@ -113,6 +156,111 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidDiscountCode(data) {
+      return hasRequiredFields(data, ['code', 'type', 'createdAt'])
+        && hasOnlyAllowedFields(data, ['code', 'type', 'createdAt'])
+        && data.code is string
+        && data.code.size() >= 1
+        && data.code.size() <= 100
+        && data.type is string
+        && data.type in [
+          'Siêu hội học đường',
+          'Thợ săn cực phẩm',
+          'Người mới'
+        ]
+        && data.createdAt is timestamp;
+    }
+
+    function isValidProduct(data) {
+      return hasRequiredFields(data, [
+          'itemId',
+          'shopId',
+          'productName',
+          'shopName',
+          'productLink',
+          'imageUrl',
+          'category',
+          'price',
+          'minPrice',
+          'maxPrice',
+          'sales',
+          'rating',
+          'commission',
+          'totalRatePercent',
+          'isXtra',
+          'sourceUpdatedAt',
+          'createdAt',
+          'updatedAt'
+        ])
+        && hasOnlyAllowedFields(data, [
+          'itemId',
+          'shopId',
+          'productName',
+          'shopName',
+          'productLink',
+          'imageUrl',
+          'category',
+          'price',
+          'minPrice',
+          'maxPrice',
+          'sales',
+          'rating',
+          'commission',
+          'totalRatePercent',
+          'isXtra',
+          'sourceUpdatedAt',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.itemId is int
+        && data.itemId >= 1
+        && data.itemId <= 999999999999
+        && data.shopId is int
+        && data.shopId >= 1
+        && data.shopId <= 999999999999
+        && data.productName is string
+        && data.productName.size() >= 1
+        && data.productName.size() <= 500
+        && data.shopName is string
+        && data.shopName.size() >= 1
+        && data.shopName.size() <= 200
+        && data.productLink is string
+        && data.productLink.size() >= 1
+        && data.productLink.size() <= 2048
+        && data.productLink.matches('^https://([a-z0-9-]+\\.)*shopee\\.vn/.*')
+        && data.imageUrl is string
+        && data.imageUrl.size() <= 2048
+        && (data.imageUrl == '' || data.imageUrl.matches('^https://.*'))
+        && data.category is string
+        && data.category.size() <= 300
+        && data.price is number
+        && data.price >= 0
+        && data.price <= 1000000000000
+        && data.minPrice is number
+        && data.minPrice >= 0
+        && data.minPrice <= 1000000000000
+        && data.maxPrice is number
+        && data.maxPrice >= 0
+        && data.maxPrice <= 1000000000000
+        && data.sales is int
+        && data.sales >= 0
+        && data.sales <= 1000000000000
+        && data.rating is number
+        && data.rating >= 0
+        && data.rating <= 5
+        && data.commission is number
+        && data.commission >= 0
+        && data.commission <= 1000000000000
+        && data.totalRatePercent is number
+        && data.totalRatePercent >= 0
+        && data.totalRatePercent <= 100
+        && data.isXtra is bool
+        && data.sourceUpdatedAt is string
+        && data.sourceUpdatedAt.size() <= 50
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     match /users/{userId}/accounts/{accountId} {
       allow read: if isOwner(userId);
 
@@ -143,6 +291,47 @@ service cloud.firestore {
       allow delete: if isOwner(userId);
 
       // Credential edits are not supported; replace the record instead.
+    }
+
+    match /discountCodes/{discountCodeId} {
+      // Public read access is intentional: visitors can view codes without login.
+      allow read: if true;
+
+      allow create: if isAdmin()
+        && isValidDiscountCode(request.resource.data)
+        && request.resource.data.createdAt == request.time;
+
+      allow delete: if isAdmin();
+
+      // Discount code edits are not supported; replace the record instead.
+    }
+
+    match /todo/{todoId} {
+      // Telegram messages are private to authenticated app users.
+      allow read: if isAuthenticated();
+
+      // No client writes are allowed. The Admin SDK automation bypasses rules.
+    }
+
+    match /products/{productId} {
+      // Public read access is intentional: visitors can view products without login.
+      allow read: if true;
+
+      allow create: if isAdmin()
+        && isValidProduct(request.resource.data)
+        && productId.matches('^[0-9]+_[0-9]+$')
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isAdmin()
+        && isValidProduct(request.resource.data)
+        && productId.matches('^[0-9]+_[0-9]+$')
+        && request.resource.data.itemId == resource.data.itemId
+        && request.resource.data.shopId == resource.data.shopId
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if isAdmin();
     }
 
     // All other paths are denied by default.

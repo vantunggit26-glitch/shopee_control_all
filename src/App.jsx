@@ -28,12 +28,15 @@ import {
   DeleteOutlined,
   FileTextOutlined,
   FilterOutlined,
+  GiftOutlined,
   KeyOutlined,
   LockOutlined,
   LogoutOutlined,
+  MessageOutlined,
   PlusOutlined,
   SafetyCertificateFilled,
   SearchOutlined,
+  ShoppingOutlined,
   TruckOutlined,
   UnorderedListOutlined,
   UserOutlined,
@@ -53,6 +56,9 @@ import {
 } from 'firebase/firestore'
 import { auth, db, FIREBASE_LOGIN_EMAIL } from './firebase'
 import CredentialsPage from './CredentialsPage'
+import DiscountCodesPage from './DiscountCodesPage'
+import ProductsPage from './ProductsPage'
+import TelegramCodesPage from './TelegramCodesPage'
 import './App.css'
 
 const { Header, Content, Footer } = Layout
@@ -189,7 +195,7 @@ function EditableAccountText({ value, placeholder, maxLength, loading, multiline
   )
 }
 
-function Login({ onLogin }) {
+function Login({ onLogin, onViewPublicContent }) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -231,6 +237,9 @@ function Login({ onLogin }) {
             </Form.Item>
             <Button type="primary" htmlType="submit" block loading={isSubmitting} icon={<SafetyCertificateFilled />}>
               Đăng nhập
+            </Button>
+            <Button type="link" block icon={<GiftOutlined />} onClick={onViewPublicContent}>
+              Xem nội dung công khai không cần đăng nhập
             </Button>
           </Form>
 
@@ -574,6 +583,9 @@ function Dashboard({ user, onLogout }) {
             items={[
               { key: 'accounts', icon: <UnorderedListOutlined />, label: 'Danh sách tài khoản' },
               { key: 'credentials', icon: <GlobalOutlined />, label: 'Đăng nhập website' },
+              { key: 'discounts', icon: <GiftOutlined />, label: 'Mã giảm giá' },
+              { key: 'products', icon: <ShoppingOutlined />, label: 'Sản phẩm' },
+              { key: 'telegram', icon: <MessageOutlined />, label: 'Lắng nghe mã' },
             ]}
           />
           <Space size={12}>
@@ -664,7 +676,13 @@ function Dashboard({ user, onLogout }) {
             }}
           />
         </Card>
-        </> : <CredentialsPage user={user} />}
+        </> : activePage === 'credentials'
+          ? <CredentialsPage user={user} />
+          : activePage === 'discounts'
+            ? <DiscountCodesPage user={user} />
+            : activePage === 'products'
+              ? <ProductsPage user={user} />
+              : <TelegramCodesPage />}
       </Content>
 
       <Footer className="app-footer"><CloudSyncOutlined /> Account Vault · Đồng bộ bằng Firebase Firestore</Footer>
@@ -682,8 +700,41 @@ function AuthLoading() {
   )
 }
 
+function PublicContent({ activePage, onNavigate, onLogin }) {
+  const isProductsPage = activePage === 'products'
+
+  return (
+    <Layout className="app-layout">
+      <Header className="app-header">
+        <div className="header-inner">
+          <div className="brand-ant">
+            <div className="brand-icon-ant"><SafetyCertificateFilled /></div>
+            <div><Text strong>Account Vault</Text><Text type="secondary">Nội dung công khai</Text></div>
+          </div>
+          <Menu
+            className="main-nav public-main-nav"
+            mode="horizontal"
+            selectedKeys={[activePage]}
+            onClick={({ key }) => onNavigate(key)}
+            items={[
+              { key: 'discounts', icon: <GiftOutlined />, label: 'Mã giảm giá' },
+              { key: 'products', icon: <ShoppingOutlined />, label: 'Sản phẩm' },
+            ]}
+          />
+          <Button icon={<UserOutlined />} onClick={onLogin}>Đăng nhập</Button>
+        </div>
+      </Header>
+      <Content className="dashboard-content">
+        {isProductsPage ? <ProductsPage /> : <DiscountCodesPage />}
+      </Content>
+      <Footer className="app-footer"><CloudSyncOutlined /> Nội dung công khai được đồng bộ bằng Firebase Firestore</Footer>
+    </Layout>
+  )
+}
+
 function VaultApp() {
   const [authState, setAuthState] = useState({ loading: true, user: null })
+  const [guestPage, setGuestPage] = useState('discounts')
 
   useEffect(() => onAuthStateChanged(auth, (user) => {
     setAuthState({ loading: false, user })
@@ -694,13 +745,15 @@ function VaultApp() {
   }
 
   async function logout() {
+    setGuestPage('discounts')
     await signOut(auth)
   }
 
   if (authState.loading) return <AuthLoading />
-  return authState.user
-    ? <Dashboard user={authState.user} onLogout={logout} />
-    : <Login onLogin={login} />
+  if (authState.user) return <Dashboard user={authState.user} onLogout={logout} />
+  return guestPage === 'login'
+    ? <Login onLogin={login} onViewPublicContent={() => setGuestPage('discounts')} />
+    : <PublicContent activePage={guestPage} onNavigate={setGuestPage} onLogin={() => setGuestPage('login')} />
 }
 
 function App() {

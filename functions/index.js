@@ -10,8 +10,8 @@ const filterKeyword = 'Người mới'
 const todoCollectionName = 'todo'
 const stateCollectionName = '_syncState'
 const stateDocumentName = 'telegram_magiamgiavoucher'
-const firstRunLookbackMilliseconds = 2 * 60 * 60 * 1000
 const messageBatchLimit = 1000
+const backfillMessageLimit = 3000
 const retentionDays = 5
 const retentionMilliseconds = retentionDays * 24 * 60 * 60 * 1000
 const firestoreBatchLimit = 400
@@ -60,31 +60,42 @@ function createDocumentId(chatId, messageId) {
   return `${safeChatId}_${messageId}`
 }
 
-function getSenderName(sender) {
-  if (!sender) return 'Không rõ người gửi'
-  if (sender.username) return `@${sender.username}`
-
-  const fullName = [sender.firstName, sender.lastName].filter(Boolean).join(' ').trim()
-  return fullName || sender.title || String(sender.id || 'Không rõ người gửi')
+function getMessageDay(date) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date)
 }
 
-async function getSender(message) {
-  try {
-    return await message.getSender()
-  } catch (error) {
-    logger.warn('Không thể lấy thông tin người gửi.', { error: error.message })
-    return null
-  }
+function extractLinks(text) {
+  const matches = String(text).match(/https?:\/\/[^\s<>"']+/giu) || []
+  return [...new Set(matches.map((link) => link.replace(/[),.;!?]+$/gu, '')))].slice(0, 20)
 }
 
-async function saveMatchingMessage(firestore, message, targetEntity) {
+function extractCodes(text) {
+  const textWithoutLinks = String(text).replace(/https?:\/\/[^\s<>"']+/giu, ' ')
+  const matches = textWithoutLinks.match(/\b(?=[A-Z0-9]{5,24}\b)(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*[0-9])[A-Z0-9]+\b/g) || []
+  return [...new Set(matches)].slice(0, 20)
+}
+
+async function saveTelegramMessage(firestore, message, targetEntity) {
   const text = limitedText(message.message, 10000)
   const chatId = limitedText(message.chatId || targetEntity.id, 100)
   const telegramMessageId = Number(message.id)
   const messageDate = toMessageDate(message.date)
-  const sender = await getSender(message)
   const chatTitle = limitedText(targetEntity.title || targetChat, 300)
   const chatUsername = limitedText(targetEntity.username || targetChat.replace(/^@/, ''), 100)
+  const containsNewUserKeyword = normalizeForSearch(text).includes(normalizeForSearch(filterKeyword))
+  const derivedData = {
+    matchedKeyword: containsNewUserKeyword ? filterKeyword : '',
+    containsNewUserKeyword,
+    detectedCodes: extractCodes(text),
+    links: extractLinks(text),
+    messageDay: getMessageDay(messageDate),
+    expiresAt: Timestamp.fromMillis(messageDate.getTime() + retentionMilliseconds),
+  }
   const sourceLink = chatUsername
     ? `https://t.me/${chatUsername}/${telegramMessageId}`
     : ''
@@ -97,22 +108,24 @@ async function saveMatchingMessage(firestore, message, targetEntity) {
       status: 'pending',
       completed: false,
       source: 'telegram',
-      matchedKeyword: filterKeyword,
       text,
       telegramMessageId,
       chatId,
       chatTitle,
       chatUsername,
-      senderId: limitedText(sender?.id, 100),
-      senderName: limitedText(getSenderName(sender), 300),
+      senderId: limitedText(targetEntity.id, 100),
+      senderName: chatTitle,
       sourceLink: limitedText(sourceLink, 2048),
       messageDate: Timestamp.fromDate(messageDate),
-      expiresAt: Timestamp.fromMillis(messageDate.getTime() + retentionMilliseconds),
       createdAt: FieldValue.serverTimestamp(),
+      ...derivedData,
     })
     return true
   } catch (error) {
-    if (error.code === 6 || error.code === 'already-exists') return false
+    if (error.code === 6 || error.code === 'already-exists') {
+      await documentReference.set(derivedData, { merge: true })
+      return false
+    }
     throw error
   }
 }
@@ -221,6 +234,7 @@ export async function synchronizeTelegramMessages() {
     const lastMessageId = stateSnapshot.exists
       ? Number(stateSnapshot.get('lastMessageId')) || 0
       : 0
+    const shouldBackfillAllMessages = !stateSnapshot.get('allMessagesBackfilledAt')
     const retentionMigration = await migrateTelegramRetention(firestore, stateSnapshot)
     const expiredDeletedCount = await deleteExpiredTelegramMessages(firestore)
     const targetEntity = await withTimeout(
@@ -229,32 +243,49 @@ export async function synchronizeTelegramMessages() {
       'Tìm kênh Telegram',
     )
     logger.info('Đang tải tin nhắn Telegram.', { targetChat, lastMessageId })
-    const messages = await withTimeout(
+    const newMessages = await withTimeout(
       client.getMessages(targetEntity, lastMessageId > 0
         ? { limit: messageBatchLimit, minId: lastMessageId, reverse: true }
         : { limit: messageBatchLimit }),
       180_000,
       'Tải tin nhắn Telegram',
     )
-    const orderedMessages = [...messages]
+    const backfillMessages = shouldBackfillAllMessages
+      ? await withTimeout(
+        client.getMessages(targetEntity, { limit: backfillMessageLimit }),
+        240_000,
+        'Tải lịch sử Telegram 5 ngày',
+      )
+      : []
+    const messagesById = new Map(
+      [...newMessages, ...backfillMessages].map((message) => [Number(message.id), message]),
+    )
+    const orderedMessages = [...messagesById.values()]
       .filter((message) => Number.isInteger(Number(message.id)))
       .sort((left, right) => Number(left.id) - Number(right.id))
-    const firstRunCutoff = Date.now() - firstRunLookbackMilliseconds
+    const retentionCutoff = Date.now() - retentionMilliseconds
     let newestMessageId = lastMessageId
     let matchedCount = 0
     let createdCount = 0
+    const messagesToSave = []
 
     for (const message of orderedMessages) {
       const messageId = Number(message.id)
       newestMessageId = Math.max(newestMessageId, messageId)
-
-      if (lastMessageId === 0 && toMessageDate(message.date).getTime() < firstRunCutoff) continue
-
       const text = limitedText(message.message, 10000)
-      if (!text || !normalizeForSearch(text).includes(normalizeForSearch(filterKeyword))) continue
+      if (!text || toMessageDate(message.date).getTime() < retentionCutoff) continue
 
-      matchedCount += 1
-      if (await saveMatchingMessage(firestore, message, targetEntity)) createdCount += 1
+      if (normalizeForSearch(text).includes(normalizeForSearch(filterKeyword))) matchedCount += 1
+      messagesToSave.push(message)
+    }
+
+    for (let offset = 0; offset < messagesToSave.length; offset += 20) {
+      const results = await Promise.all(
+        messagesToSave
+          .slice(offset, offset + 20)
+          .map((message) => saveTelegramMessage(firestore, message, targetEntity)),
+      )
+      createdCount += results.filter(Boolean).length
     }
 
     const stateUpdate = {
@@ -272,6 +303,9 @@ export async function synchronizeTelegramMessages() {
     if (retentionMigration.completed) {
       stateUpdate.retentionMigratedAt = FieldValue.serverTimestamp()
     }
+    if (shouldBackfillAllMessages) {
+      stateUpdate.allMessagesBackfilledAt = FieldValue.serverTimestamp()
+    }
     await stateReference.set(stateUpdate, { merge: true })
 
     logger.info('Đồng bộ Telegram hoàn tất.', {
@@ -279,6 +313,7 @@ export async function synchronizeTelegramMessages() {
       previousMessageId: lastMessageId,
       newestMessageId,
       fetchedCount: orderedMessages.length,
+      savedCount: messagesToSave.length,
       matchedCount,
       createdCount,
       deletedCount: retentionMigration.deletedCount + expiredDeletedCount,
