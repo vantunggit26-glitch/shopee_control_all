@@ -234,15 +234,15 @@ export default function TelegramCodesPage() {
     <>
       <section className="welcome-section telegram-welcome">
         <div>
-          <Text className="section-kicker">KÊNH TELEGRAM CÔNG KHAI</Text>
-          <Title level={2}>Lắng nghe mã</Title>
+          <Text className="section-kicker">KHO MÃ TỰ ĐỘNG</Text>
+          <Title level={2}>Mã giảm giá</Title>
           <Paragraph type="secondary">
             Ai cũng có thể xem. Tin được đồng bộ mỗi giờ và tự xóa sau 5 ngày.
           </Paragraph>
         </div>
         <Space size={12} wrap>
           <Card className="stat-card telegram-stat-card" variant="borderless">
-            <Statistic title="Tin trong 5 ngày" value={telegramMessages.length} prefix={<MessageOutlined />} />
+            <Statistic title="Ưu đãi trong 5 ngày" value={telegramMessages.length} prefix={<MessageOutlined />} />
           </Card>
           <Card className="stat-card telegram-stat-card" variant="borderless">
             <Statistic title="Người mới hôm nay" value={newUserMessagesToday.length} prefix={<CalendarOutlined />} />
@@ -260,7 +260,7 @@ export default function TelegramCodesPage() {
 
       {error && <Alert className="data-alert telegram-error-alert" type="error" message={error} showIcon closable onClose={() => setError('')} />}
 
-      <Card className="panel-card table-card" title={<Space><MessageOutlined className="panel-title-icon list" /><span>Danh sách mã từ Telegram</span></Space>} extra={(
+      <Card className="panel-card table-card" title={<Space><MessageOutlined className="panel-title-icon list" /><span>Danh sách mã giảm giá</span></Space>} extra={(
         <Space wrap>
           <Select
             className="telegram-filter-select"

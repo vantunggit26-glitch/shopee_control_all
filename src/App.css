@@ -34,8 +34,13 @@
   z-index: 1;
 }
 
+.login-shell {
+  width: min(760px, 100%);
+}
+
 .login-card {
   width: min(440px, 100%);
+  margin: 0 auto;
   border: 1px solid rgba(218, 225, 238, .8);
   box-shadow: 0 24px 70px rgba(27, 44, 82, .12);
 }
@@ -104,8 +109,8 @@
 }
 
 .login-hint-ant {
-  margin-top: 26px;
-  padding-top: 22px;
+  margin-top: 24px;
+  padding-top: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -113,6 +118,97 @@
   border-top: 1px solid #eef0f4;
   color: #8c8c8c;
   font-size: 12px;
+}
+
+.public-features {
+  margin-top: 26px;
+}
+
+.public-features-heading {
+  margin-bottom: 14px;
+  text-align: center;
+}
+
+.public-features-heading h4.ant-typography {
+  margin: 4px 0 0;
+  color: #17233c;
+}
+
+.public-feature-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.public-feature-card {
+  min-height: 112px;
+  padding: 20px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid rgba(218, 225, 238, .9);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, .92);
+  box-shadow: 0 12px 32px rgba(27, 44, 82, .08);
+  color: #17233c;
+  text-align: left;
+  cursor: pointer;
+  transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease;
+}
+
+.public-feature-card:hover,
+.public-feature-card:focus-visible {
+  transform: translateY(-3px);
+  border-color: #91caff;
+  box-shadow: 0 18px 38px rgba(22, 119, 255, .14);
+  outline: none;
+}
+
+.public-feature-icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  font-size: 23px;
+}
+
+.public-feature-card.vouchers .public-feature-icon {
+  color: #722ed1;
+  background: #f4ecff;
+}
+
+.public-feature-card.products .public-feature-icon {
+  color: #1677ff;
+  background: #eaf4ff;
+}
+
+.public-feature-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.public-feature-copy > .ant-typography:first-child {
+  font-size: 16px;
+}
+
+.public-feature-copy > .ant-typography:last-child {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.public-feature-arrow {
+  color: #8c8c8c;
+  transition: transform .2s ease, color .2s ease;
+}
+
+.public-feature-card:hover .public-feature-arrow,
+.public-feature-card:focus-visible .public-feature-arrow {
+  color: #1677ff;
+  transform: translateX(3px);
 }
 
 .login-footer-ant {
@@ -742,6 +838,15 @@
 
   .login-card .ant-card-body {
     padding: 30px 22px 26px;
+  }
+
+  .public-feature-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .public-feature-card {
+    min-height: 96px;
+    padding: 16px;
   }
 
   .brand-ant > div:last-child > .ant-typography:first-child {

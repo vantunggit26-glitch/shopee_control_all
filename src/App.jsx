@@ -24,6 +24,7 @@ import {
 } from 'antd'
 import viVN from 'antd/locale/vi_VN'
 import {
+  ArrowRightOutlined,
   CloudSyncOutlined,
   DeleteOutlined,
   FileTextOutlined,
@@ -32,7 +33,6 @@ import {
   KeyOutlined,
   LockOutlined,
   LogoutOutlined,
-  MessageOutlined,
   PlusOutlined,
   SafetyCertificateFilled,
   SearchOutlined,
@@ -56,7 +56,6 @@ import {
 } from 'firebase/firestore'
 import { auth, db, FIREBASE_LOGIN_EMAIL } from './firebase'
 import CredentialsPage from './CredentialsPage'
-import DiscountCodesPage from './DiscountCodesPage'
 import ProductsPage from './ProductsPage'
 import TelegramCodesPage from './TelegramCodesPage'
 import './App.css'
@@ -220,33 +219,57 @@ function Login({ onLogin, onViewPublicContent }) {
   return (
     <Layout className="login-layout">
       <Content className="login-content">
-        <Card className="login-card" variant="borderless">
-          <div className="login-brand-icon"><SafetyCertificateFilled /></div>
-          <Text className="login-eyebrow">KHÔNG GIAN CÁ NHÂN</Text>
-          <Title level={2}>Chào mừng trở lại</Title>
-          <Paragraph type="secondary">Đăng nhập để quản lý và đồng bộ tài khoản của bạn.</Paragraph>
+        <div className="login-shell">
+          <Card className="login-card" variant="borderless">
+            <div className="login-brand-icon"><SafetyCertificateFilled /></div>
+            <Text className="login-eyebrow">KHÔNG GIAN CÁ NHÂN</Text>
+            <Title level={2}>Chào mừng trở lại</Title>
+            <Paragraph type="secondary">Đăng nhập để quản lý và đồng bộ tài khoản của bạn.</Paragraph>
 
-          {error && <Alert className="login-alert" message={error} type="error" showIcon closable onClose={() => setError('')} />}
+            {error && <Alert className="login-alert" message={error} type="error" showIcon closable onClose={() => setError('')} />}
 
-          <Form layout="vertical" requiredMark={false} onFinish={handleSubmit} size="large">
-            <Form.Item label="Tên đăng nhập" name="username" rules={[{ required: true, message: 'Vui lòng nhập tên đăng nhập' }]}>
-              <Input prefix={<UserOutlined />} placeholder="tungtv" autoComplete="username" autoFocus />
-            </Form.Item>
-            <Form.Item label="Mật khẩu" name="password" rules={[{ required: true, message: 'Vui lòng nhập mật khẩu' }]}>
-              <Input.Password prefix={<LockOutlined />} placeholder="Nhập mật khẩu Firebase" autoComplete="current-password" />
-            </Form.Item>
-            <Button type="primary" htmlType="submit" block loading={isSubmitting} icon={<SafetyCertificateFilled />}>
-              Đăng nhập
-            </Button>
-            <Button type="link" block icon={<GiftOutlined />} onClick={onViewPublicContent}>
-              Xem nội dung công khai không cần đăng nhập
-            </Button>
-          </Form>
+            <Form layout="vertical" requiredMark={false} onFinish={handleSubmit} size="large">
+              <Form.Item label="Tên đăng nhập" name="username" rules={[{ required: true, message: 'Vui lòng nhập tên đăng nhập' }]}>
+                <Input prefix={<UserOutlined />} placeholder="Tên đăng nhập hoặc email" autoComplete="username" autoFocus />
+              </Form.Item>
+              <Form.Item label="Mật khẩu" name="password" rules={[{ required: true, message: 'Vui lòng nhập mật khẩu' }]}>
+                <Input.Password prefix={<LockOutlined />} placeholder="Nhập mật khẩu" autoComplete="current-password" />
+              </Form.Item>
+              <Button type="primary" htmlType="submit" block loading={isSubmitting} icon={<SafetyCertificateFilled />}>
+                Đăng nhập
+              </Button>
+            </Form>
 
-          <div className="login-hint-ant">
-            <KeyOutlined /> Đăng nhập bằng <Text strong>tungtv</Text> hoặc email
-          </div>
-        </Card>
+            <div className="login-hint-ant">
+              <LockOutlined /> Khu vực dành cho tài khoản được cấp quyền
+            </div>
+          </Card>
+
+          <section className="public-features" aria-labelledby="public-features-title">
+            <div className="public-features-heading">
+              <Text className="login-eyebrow">KHÁM PHÁ MIỄN PHÍ</Text>
+              <Title id="public-features-title" level={4}>Dùng ngay, không cần đăng nhập</Title>
+            </div>
+            <div className="public-feature-grid">
+              <button className="public-feature-card vouchers" type="button" onClick={() => onViewPublicContent('telegram')}>
+                <span className="public-feature-icon"><GiftOutlined /></span>
+                <span className="public-feature-copy">
+                  <Text strong>Mã giảm giá</Text>
+                  <Text type="secondary">Xem mã ưu đãi được cập nhật tự động mỗi giờ.</Text>
+                </span>
+                <ArrowRightOutlined className="public-feature-arrow" />
+              </button>
+              <button className="public-feature-card products" type="button" onClick={() => onViewPublicContent('products')}>
+                <span className="public-feature-icon"><ShoppingOutlined /></span>
+                <span className="public-feature-copy">
+                  <Text strong>Sản phẩm</Text>
+                  <Text type="secondary">Khám phá sản phẩm và mở liên kết mua sắm.</Text>
+                </span>
+                <ArrowRightOutlined className="public-feature-arrow" />
+              </button>
+            </div>
+          </section>
+        </div>
       </Content>
       <Footer className="login-footer-ant">Được bảo vệ bởi Firebase Authentication</Footer>
     </Layout>
@@ -583,9 +606,8 @@ function Dashboard({ user, onLogout }) {
             items={[
               { key: 'accounts', icon: <UnorderedListOutlined />, label: 'Danh sách tài khoản' },
               { key: 'credentials', icon: <GlobalOutlined />, label: 'Đăng nhập website' },
-              { key: 'discounts', icon: <GiftOutlined />, label: 'Mã giảm giá' },
               { key: 'products', icon: <ShoppingOutlined />, label: 'Sản phẩm' },
-              { key: 'telegram', icon: <MessageOutlined />, label: 'Lắng nghe mã' },
+              { key: 'telegram', icon: <GiftOutlined />, label: 'Mã giảm giá' },
             ]}
           />
           <Space size={12}>
@@ -678,11 +700,9 @@ function Dashboard({ user, onLogout }) {
         </Card>
         </> : activePage === 'credentials'
           ? <CredentialsPage user={user} />
-          : activePage === 'discounts'
-            ? <DiscountCodesPage user={user} />
-            : activePage === 'products'
-              ? <ProductsPage user={user} />
-              : <TelegramCodesPage />}
+          : activePage === 'products'
+            ? <ProductsPage user={user} />
+            : <TelegramCodesPage />}
       </Content>
 
       <Footer className="app-footer"><CloudSyncOutlined /> Account Vault · Đồng bộ bằng Firebase Firestore</Footer>
@@ -702,7 +722,6 @@ function AuthLoading() {
 
 function PublicContent({ activePage, onNavigate, onLogin }) {
   const isProductsPage = activePage === 'products'
-  const isTelegramPage = activePage === 'telegram'
 
   return (
     <Layout className="app-layout">
@@ -718,20 +737,15 @@ function PublicContent({ activePage, onNavigate, onLogin }) {
             selectedKeys={[activePage]}
             onClick={({ key }) => onNavigate(key)}
             items={[
-              { key: 'discounts', icon: <GiftOutlined />, label: 'Mã giảm giá' },
               { key: 'products', icon: <ShoppingOutlined />, label: 'Sản phẩm' },
-              { key: 'telegram', icon: <MessageOutlined />, label: 'Lắng nghe mã' },
+              { key: 'telegram', icon: <GiftOutlined />, label: 'Mã giảm giá' },
             ]}
           />
           <Button icon={<UserOutlined />} onClick={onLogin}>Đăng nhập</Button>
         </div>
       </Header>
       <Content className="dashboard-content">
-        {isProductsPage
-          ? <ProductsPage />
-          : isTelegramPage
-            ? <TelegramCodesPage />
-            : <DiscountCodesPage />}
+        {isProductsPage ? <ProductsPage /> : <TelegramCodesPage />}
       </Content>
       <Footer className="app-footer"><CloudSyncOutlined /> Nội dung công khai được đồng bộ bằng Firebase Firestore</Footer>
     </Layout>
@@ -740,7 +754,7 @@ function PublicContent({ activePage, onNavigate, onLogin }) {
 
 function VaultApp() {
   const [authState, setAuthState] = useState({ loading: true, user: null })
-  const [guestPage, setGuestPage] = useState('discounts')
+  const [guestPage, setGuestPage] = useState('telegram')
 
   useEffect(() => onAuthStateChanged(auth, (user) => {
     setAuthState({ loading: false, user })
@@ -751,14 +765,14 @@ function VaultApp() {
   }
 
   async function logout() {
-    setGuestPage('discounts')
+    setGuestPage('telegram')
     await signOut(auth)
   }
 
   if (authState.loading) return <AuthLoading />
   if (authState.user) return <Dashboard user={authState.user} onLogout={logout} />
   return guestPage === 'login'
-    ? <Login onLogin={login} onViewPublicContent={() => setGuestPage('discounts')} />
+    ? <Login onLogin={login} onViewPublicContent={setGuestPage} />
     : <PublicContent activePage={guestPage} onNavigate={setGuestPage} onLogin={() => setGuestPage('login')} />
 }
 
