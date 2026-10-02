@@ -130,6 +130,7 @@ export default function TelegramCodesPage() {
     return telegramMessages.filter((item) => {
       const matchesView = viewFilter === 'all'
         || (viewFilter === 'today' && item.messageDay === today)
+        || (viewFilter === 'new-user' && item.containsNewUserKeyword)
         || (viewFilter === 'today-new-user' && item.messageDay === today && item.containsNewUserKeyword)
       const searchableText = normalizeForSearch([
         item.text,
@@ -245,6 +246,7 @@ export default function TelegramCodesPage() {
             onChange={setViewFilter}
             options={[
               { value: 'today-new-user', label: 'Người mới hôm nay' },
+              { value: 'new-user', label: 'Người mới trong 5 ngày' },
               { value: 'today', label: 'Tất cả hôm nay' },
               { value: 'all', label: 'Tất cả trong 5 ngày' },
             ]}
