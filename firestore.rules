@@ -307,8 +307,8 @@ service cloud.firestore {
     }
 
     match /todo/{todoId} {
-      // Telegram messages are private to authenticated app users.
-      allow read: if isAuthenticated();
+      // Public read access is intentional: visitors can view Telegram codes without login.
+      allow read: if true;
 
       // No client writes are allowed. The Admin SDK automation bypasses rules.
     }

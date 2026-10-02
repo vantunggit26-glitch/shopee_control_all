@@ -78,7 +78,9 @@ function extractCodesFromLinks(links) {
         const candidate = url.searchParams.get(parameterName)?.trim() || ''
         if (/^(?=.*[A-Z])(?=.*[0-9])[A-Z0-9]{5,40}$/.test(candidate)) codes.push(candidate)
       }
-    } catch {}
+    } catch {
+      continue
+    }
   }
   return [...new Set(codes)]
 }
@@ -232,10 +234,10 @@ export default function TelegramCodesPage() {
     <>
       <section className="welcome-section telegram-welcome">
         <div>
-          <Text className="section-kicker">KÊNH TELEGRAM RIÊNG TƯ</Text>
+          <Text className="section-kicker">KÊNH TELEGRAM CÔNG KHAI</Text>
           <Title level={2}>Lắng nghe mã</Title>
           <Paragraph type="secondary">
-            Chỉ người đã đăng nhập mới xem được. Tin được đồng bộ mỗi giờ và tự xóa sau 5 ngày.
+            Ai cũng có thể xem. Tin được đồng bộ mỗi giờ và tự xóa sau 5 ngày.
           </Paragraph>
         </div>
         <Space size={12} wrap>

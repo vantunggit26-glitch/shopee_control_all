@@ -7,15 +7,26 @@
     "dev": "node ./node_modules/vite/bin/vite.js",
     "build": "node ./node_modules/vite/bin/vite.js build",
     "lint": "node ./node_modules/eslint/bin/eslint.js .",
-    "preview": "node ./node_modules/vite/bin/vite.js preview"
+    "preview": "node ./node_modules/vite/bin/vite.js preview",
+    "functions:install": "npm --prefix functions install",
+    "telegram:listen": "node --env-file=.env.telegram.local scripts/telegram-listener.js",
+    "telegram:install-background": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-telegram-listener-task.ps1",
+    "telegram:start": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start-telegram-listener.ps1",
+    "telegram:stop": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/stop-telegram-listener.ps1",
+    "telegram:status": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/status-telegram-listener.ps1",
+    "telegram:logs": "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Get-Content -Path '.telegram/logs/output.log' -Tail 50 -Wait\"",
+    "telegram:uninstall-background": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/uninstall-telegram-listener-task.ps1"
   },
   "dependencies": {
     "@ant-design/icons": "^6.3.4",
     "@dataconnect/generated": "file:src/dataconnect-generated",
     "antd": "^6.6.5",
     "firebase": "^12.19.0",
+    "firebase-admin": "^14.5.0",
+    "input": "^1.0.1",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "teleproto": "^1.229.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

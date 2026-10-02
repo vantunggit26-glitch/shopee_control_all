@@ -702,6 +702,7 @@ function AuthLoading() {
 
 function PublicContent({ activePage, onNavigate, onLogin }) {
   const isProductsPage = activePage === 'products'
+  const isTelegramPage = activePage === 'telegram'
 
   return (
     <Layout className="app-layout">
@@ -719,13 +720,18 @@ function PublicContent({ activePage, onNavigate, onLogin }) {
             items={[
               { key: 'discounts', icon: <GiftOutlined />, label: 'Mã giảm giá' },
               { key: 'products', icon: <ShoppingOutlined />, label: 'Sản phẩm' },
+              { key: 'telegram', icon: <MessageOutlined />, label: 'Lắng nghe mã' },
             ]}
           />
           <Button icon={<UserOutlined />} onClick={onLogin}>Đăng nhập</Button>
         </div>
       </Header>
       <Content className="dashboard-content">
-        {isProductsPage ? <ProductsPage /> : <DiscountCodesPage />}
+        {isProductsPage
+          ? <ProductsPage />
+          : isTelegramPage
+            ? <TelegramCodesPage />
+            : <DiscountCodesPage />}
       </Content>
       <Footer className="app-footer"><CloudSyncOutlined /> Nội dung công khai được đồng bộ bằng Firebase Firestore</Footer>
     </Layout>

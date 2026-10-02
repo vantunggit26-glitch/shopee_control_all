@@ -119,7 +119,9 @@ function extractCodesFromLinks(links) {
         const candidate = url.searchParams.get(parameterName)?.trim() || ''
         if (/^(?=.*[A-Z])(?=.*[0-9])[A-Z0-9]{5,40}$/.test(candidate)) codes.push(candidate)
       }
-    } catch {}
+    } catch {
+      continue
+    }
   }
   return [...new Set(codes)]
 }
