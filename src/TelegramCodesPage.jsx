@@ -69,11 +69,29 @@ function extractCodes(text) {
   return [...new Set(matches)]
 }
 
+function extractCodesFromLinks(links) {
+  const codes = []
+  for (const value of links) {
+    try {
+      const url = new URL(value)
+      for (const parameterName of ['keyword', 'voucherCode', 'code']) {
+        const candidate = url.searchParams.get(parameterName)?.trim() || ''
+        if (/^(?=.*[A-Z])(?=.*[0-9])[A-Z0-9]{5,40}$/.test(candidate)) codes.push(candidate)
+      }
+    } catch {}
+  }
+  return [...new Set(codes)]
+}
+
 function normalizeMessage(documentSnapshot) {
   const data = documentSnapshot.data()
   const text = String(data.text || '')
   const links = Array.isArray(data.links) ? data.links : extractLinks(text)
-  const detectedCodes = Array.isArray(data.detectedCodes) ? data.detectedCodes : extractCodes(text)
+  const resolvedLinks = Array.isArray(data.resolvedLinks) ? data.resolvedLinks : links
+  const detectedCodes = [...new Set([
+    ...(Array.isArray(data.detectedCodes) ? data.detectedCodes : extractCodes(text)),
+    ...extractCodesFromLinks(resolvedLinks),
+  ])]
   const containsNewUserKeyword = typeof data.containsNewUserKeyword === 'boolean'
     ? data.containsNewUserKeyword
     : normalizeForSearch(text).includes(normalizeForSearch(filterKeyword))
@@ -83,6 +101,7 @@ function normalizeMessage(documentSnapshot) {
     ...data,
     text,
     links,
+    resolvedLinks,
     detectedCodes,
     containsNewUserKeyword,
     messageDay: data.messageDay || (data.messageDate?.toDate ? getDayKey(data.messageDate.toDate()) : ''),
@@ -136,6 +155,7 @@ export default function TelegramCodesPage() {
         item.text,
         ...(item.detectedCodes || []),
         ...(item.links || []),
+        ...(item.resolvedLinks || []),
       ].join(' '))
       return matchesView && (!searchText || searchableText.includes(searchText))
     })
@@ -186,7 +206,7 @@ export default function TelegramCodesPage() {
       width: 150,
       render: (_value, record) => (
         <Space direction="vertical" size={4}>
-          {(record.links || []).slice(0, 2).map((url, index) => (
+          {(record.resolvedLinks || record.links || []).slice(0, 2).map((url, index) => (
             <Link key={url} href={url} target="_blank" rel="noopener noreferrer">
               <LinkOutlined /> {index === 0 ? 'Mở ưu đãi' : `Liên kết ${index + 1}`}
             </Link>

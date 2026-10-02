@@ -15,6 +15,8 @@ const backfillMessageLimit = 3000
 const retentionDays = 5
 const retentionMilliseconds = retentionDays * 24 * 60 * 60 * 1000
 const firestoreBatchLimit = 400
+const linkResolutionVersion = 1
+const linkResolutionCache = new Map()
 const logger = {
   info(message, details = {}) {
     console.log(JSON.stringify({ severity: 'INFO', message, ...details }))
@@ -80,6 +82,48 @@ function extractCodes(text) {
   return [...new Set(matches)].slice(0, 20)
 }
 
+function isShopeeShortLink(value) {
+  try {
+    const hostname = new URL(value).hostname.toLocaleLowerCase('en')
+    return hostname === 's.shopee.vn' || hostname === 'vn.shp.ee' || hostname === 'shp.ee'
+  } catch {
+    return false
+  }
+}
+
+async function resolveLink(value) {
+  if (!isShopeeShortLink(value)) return value
+  if (linkResolutionCache.has(value)) return linkResolutionCache.get(value)
+
+  const resolutionPromise = fetch(value, {
+    method: 'HEAD',
+    redirect: 'follow',
+    signal: AbortSignal.timeout(12_000),
+    headers: { 'user-agent': 'Mozilla/5.0' },
+  })
+    .then((response) => response.url || value)
+    .catch((error) => {
+      logger.warn('Không thể mở link rút gọn Shopee.', { url: value, error: error.message })
+      return value
+    })
+  linkResolutionCache.set(value, resolutionPromise)
+  return resolutionPromise
+}
+
+function extractCodesFromLinks(links) {
+  const codes = []
+  for (const value of links) {
+    try {
+      const url = new URL(value)
+      for (const parameterName of ['keyword', 'voucherCode', 'code']) {
+        const candidate = url.searchParams.get(parameterName)?.trim() || ''
+        if (/^(?=.*[A-Z])(?=.*[0-9])[A-Z0-9]{5,40}$/.test(candidate)) codes.push(candidate)
+      }
+    } catch {}
+  }
+  return [...new Set(codes)]
+}
+
 async function saveTelegramMessage(firestore, message, targetEntity) {
   const text = limitedText(message.message, 10000)
   const chatId = limitedText(message.chatId || targetEntity.id, 100)
@@ -88,11 +132,14 @@ async function saveTelegramMessage(firestore, message, targetEntity) {
   const chatTitle = limitedText(targetEntity.title || targetChat, 300)
   const chatUsername = limitedText(targetEntity.username || targetChat.replace(/^@/, ''), 100)
   const containsNewUserKeyword = normalizeForSearch(text).includes(normalizeForSearch(filterKeyword))
+  const links = extractLinks(text)
+  const resolvedLinks = await Promise.all(links.map(resolveLink))
   const derivedData = {
     matchedKeyword: containsNewUserKeyword ? filterKeyword : '',
     containsNewUserKeyword,
-    detectedCodes: extractCodes(text),
-    links: extractLinks(text),
+    detectedCodes: [...new Set([...extractCodes(text), ...extractCodesFromLinks(resolvedLinks)])].slice(0, 20),
+    links,
+    resolvedLinks,
     messageDay: getMessageDay(messageDate),
     expiresAt: Timestamp.fromMillis(messageDate.getTime() + retentionMilliseconds),
   }
@@ -235,6 +282,7 @@ export async function synchronizeTelegramMessages() {
       ? Number(stateSnapshot.get('lastMessageId')) || 0
       : 0
     const shouldBackfillAllMessages = !stateSnapshot.get('allMessagesBackfilledAt')
+      || Number(stateSnapshot.get('linkResolutionVersion') || 0) < linkResolutionVersion
     const retentionMigration = await migrateTelegramRetention(firestore, stateSnapshot)
     const expiredDeletedCount = await deleteExpiredTelegramMessages(firestore)
     const targetEntity = await withTimeout(
@@ -279,10 +327,10 @@ export async function synchronizeTelegramMessages() {
       messagesToSave.push(message)
     }
 
-    for (let offset = 0; offset < messagesToSave.length; offset += 20) {
+    for (let offset = 0; offset < messagesToSave.length; offset += 5) {
       const results = await Promise.all(
         messagesToSave
-          .slice(offset, offset + 20)
+          .slice(offset, offset + 5)
           .map((message) => saveTelegramMessage(firestore, message, targetEntity)),
       )
       createdCount += results.filter(Boolean).length
@@ -305,6 +353,8 @@ export async function synchronizeTelegramMessages() {
     }
     if (shouldBackfillAllMessages) {
       stateUpdate.allMessagesBackfilledAt = FieldValue.serverTimestamp()
+      stateUpdate.linkResolutionVersion = linkResolutionVersion
+      stateUpdate.linksResolvedAt = FieldValue.serverTimestamp()
     }
     await stateReference.set(stateUpdate, { merge: true })
 
