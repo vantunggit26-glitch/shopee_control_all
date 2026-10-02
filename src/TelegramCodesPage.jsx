@@ -16,7 +16,6 @@ import {
 import {
   CalendarOutlined,
   CopyOutlined,
-  LinkOutlined,
   MessageOutlined,
   SearchOutlined,
 } from '@ant-design/icons'
@@ -83,6 +82,26 @@ function extractCodesFromLinks(links) {
     }
   }
   return [...new Set(codes)]
+}
+
+function renderLinkedMessage(text, links, resolvedLinks) {
+  return String(text || '').split(/(https?:\/\/[^\s<>"']+)/giu).map((part, index) => {
+    if (!/^https?:\/\//iu.test(part)) return part
+
+    const displayUrl = part.replace(/[),.;!?]+$/gu, '')
+    const trailingPunctuation = part.slice(displayUrl.length)
+    const linkIndex = links.indexOf(displayUrl)
+    const destination = resolvedLinks[linkIndex] || displayUrl
+
+    return (
+      <span key={`${displayUrl}-${index}`}>
+        <Link className="telegram-inline-link" href={destination} target="_blank" rel="noopener noreferrer">
+          {displayUrl}
+        </Link>
+        {trailingPunctuation}
+      </span>
+    )
+  })
 }
 
 function normalizeMessage(documentSnapshot) {
@@ -182,8 +201,15 @@ export default function TelegramCodesPage() {
           <Space size={6} wrap>
             {record.containsNewUserKeyword && <Tag color="green">Người mới</Tag>}
             <Text type="secondary">#{record.telegramMessageId}</Text>
+            {record.sourceLink && (
+              <Link href={record.sourceLink} target="_blank" rel="noopener noreferrer">
+                <MessageOutlined /> Tin gốc
+              </Link>
+            )}
           </Space>
-          <Paragraph ellipsis={{ rows: 3, expandable: true, symbol: 'Xem thêm' }}>{text}</Paragraph>
+          <Paragraph ellipsis={{ rows: 3, expandable: true, symbol: 'Xem thêm' }}>
+            {renderLinkedMessage(text, record.links || [], record.resolvedLinks || record.links || [])}
+          </Paragraph>
         </div>
       ),
     },
@@ -201,25 +227,6 @@ export default function TelegramCodesPage() {
           ))}
         </Space>
       ) : <Text type="secondary">Chỉ có nội dung/link</Text>,
-    },
-    {
-      title: 'Liên kết',
-      key: 'links',
-      width: 150,
-      render: (_value, record) => (
-        <Space direction="vertical" size={4}>
-          {(record.resolvedLinks || record.links || []).slice(0, 2).map((url, index) => (
-            <Link key={url} href={url} target="_blank" rel="noopener noreferrer">
-              <LinkOutlined /> {index === 0 ? 'Mở ưu đãi' : `Liên kết ${index + 1}`}
-            </Link>
-          ))}
-          {record.sourceLink && (
-            <Link href={record.sourceLink} target="_blank" rel="noopener noreferrer">
-              <MessageOutlined /> Tin gốc
-            </Link>
-          )}
-        </Space>
-      ),
     },
     {
       title: 'Thời gian',
@@ -255,7 +262,7 @@ export default function TelegramCodesPage() {
         type="info"
         showIcon
         message={`Hôm nay có ${newUserMessagesToday.length} tin chứa “${filterKeyword}”.`}
-        description="Nếu tin chỉ có đường dẫn rút gọn và không có mã chữ, hãy dùng nút Mở ưu đãi."
+        description="Các đường dẫn trong nội dung có thể bấm để mở trực tiếp ưu đãi."
       />
 
       {error && <Alert className="data-alert telegram-error-alert" type="error" message={error} showIcon closable onClose={() => setError('')} />}
@@ -289,7 +296,7 @@ export default function TelegramCodesPage() {
           dataSource={filteredMessages}
           loading={isLoading}
           pagination={{ pageSize: 20, hideOnSinglePage: true }}
-          scroll={{ x: 940 }}
+          scroll={{ x: 780 }}
           locale={{
             emptyText: (
               <Empty

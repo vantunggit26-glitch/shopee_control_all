@@ -606,6 +606,13 @@
   white-space: pre-wrap;
 }
 
+.telegram-inline-link {
+  overflow-wrap: anywhere;
+  text-decoration: underline;
+  text-decoration-color: rgba(22, 119, 255, .35);
+  text-underline-offset: 2px;
+}
+
 .public-main-nav {
   min-width: 330px;
 }
