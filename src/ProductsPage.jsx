@@ -17,6 +17,7 @@ import {
 import {
   CopyOutlined,
   DeleteOutlined,
+  FileTextOutlined,
   LinkOutlined,
   PlusOutlined,
   SearchOutlined,
@@ -120,6 +121,36 @@ function normalizeProduct(productInfo, submittedUrl) {
   }
 }
 
+function ProductNoteCell({ value, canManage, loading, onSave }) {
+  const [draft, setDraft] = useState(value || '')
+
+  async function saveDraft() {
+    const normalizedValue = draft.trim()
+    if (normalizedValue === (value || '')) return
+
+    const saved = await onSave(normalizedValue)
+    if (!saved) setDraft(value || '')
+  }
+
+  if (!canManage) {
+    return <Text className="product-note-readonly" type={value ? undefined : 'secondary'}>{value || '—'}</Text>
+  }
+
+  return (
+    <Input.TextArea
+      className="product-note-input"
+      value={draft}
+      placeholder="Nhập ghi chú..."
+      maxLength={1000}
+      disabled={loading}
+      autoSize={{ minRows: 2, maxRows: 2 }}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={saveDraft}
+      aria-label="Ghi chú sản phẩm"
+    />
+  )
+}
+
 async function fetchProduct(productUrl) {
   const response = await fetch(`${PRODUCT_API_URL}?url=${encodeURIComponent(productUrl)}`, {
     method: 'GET',
@@ -150,6 +181,7 @@ export default function ProductsPage({ user = null }) {
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [deletingId, setDeletingId] = useState('')
+  const [updatingNoteId, setUpdatingNoteId] = useState('')
   const canManage = user?.email === FIREBASE_LOGIN_EMAIL
 
   useEffect(() => {
@@ -182,7 +214,7 @@ export default function ProductsPage({ user = null }) {
     if (!searchText) return products
 
     return products.filter((product) => (
-      `${product.productName || ''} ${product.shopName || ''} ${product.category || ''} ${product.itemId || ''}`
+      `${product.productName || ''} ${product.shopName || ''} ${product.category || ''} ${product.itemId || ''} ${product.note || ''}`
         .toLocaleLowerCase('vi')
         .includes(searchText)
     ))
@@ -211,6 +243,7 @@ export default function ProductsPage({ user = null }) {
       } else {
         await setDoc(productRef, {
           ...product,
+          note: '',
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         })
@@ -253,11 +286,31 @@ export default function ProductsPage({ user = null }) {
     }
   }
 
+  async function updateProductNote(id, note) {
+    if (!canManage || note.length > 1000) return false
+
+    setUpdatingNoteId(id)
+    setError('')
+    try {
+      await updateDoc(doc(db, 'products', id), {
+        note,
+        updatedAt: serverTimestamp(),
+      })
+      message.success('Đã lưu ghi chú sản phẩm')
+      return true
+    } catch {
+      setError('Không thể lưu ghi chú sản phẩm. Vui lòng thử lại.')
+      return false
+    } finally {
+      setUpdatingNoteId('')
+    }
+  }
+
   const columns = [
     {
       title: 'Sản phẩm',
       key: 'product',
-      width: 430,
+      width: 300,
       render: (_value, record) => (
         <div className="product-cell">
           {record.imageUrl ? (
@@ -279,7 +332,7 @@ export default function ProductsPage({ user = null }) {
     {
       title: 'Giá',
       key: 'price',
-      width: 180,
+      width: 115,
       render: (_value, record) => (
         <div className="product-price-cell">
           <Text strong>{formatPrice(record.price)}</Text>
@@ -292,7 +345,7 @@ export default function ProductsPage({ user = null }) {
     {
       title: 'Đã bán / Đánh giá',
       key: 'performance',
-      width: 150,
+      width: 125,
       render: (_value, record) => (
         <div className="product-price-cell">
           <Text>{new Intl.NumberFormat('vi-VN').format(record.sales || 0)} đã bán</Text>
@@ -303,7 +356,7 @@ export default function ProductsPage({ user = null }) {
     {
       title: 'Hoa hồng',
       key: 'commission',
-      width: 140,
+      width: 105,
       render: (_value, record) => (
         <div className="product-price-cell">
           <Text strong>{formatPrice(record.commission)}</Text>
@@ -312,16 +365,31 @@ export default function ProductsPage({ user = null }) {
       ),
     },
     {
+      title: <Space size={6}><FileTextOutlined /> Ghi chú</Space>,
+      dataIndex: 'note',
+      key: 'note',
+      width: 210,
+      render: (note, record) => (
+        <ProductNoteCell
+          key={`${record.id}:note:${note || ''}`}
+          value={note}
+          canManage={canManage}
+          loading={updatingNoteId === record.id}
+          onSave={(value) => updateProductNote(record.id, value)}
+        />
+      ),
+    },
+    {
       title: 'Cập nhật',
       dataIndex: 'updatedAt',
       key: 'updatedAt',
-      width: 170,
+      width: 135,
       render: formatCreatedAt,
     },
     {
       title: '',
       key: 'action',
-      width: canManage ? 104 : 64,
+      width: canManage ? 84 : 48,
       align: 'right',
       render: (_value, record) => (
         <Space size={0}>
@@ -382,7 +450,7 @@ export default function ProductsPage({ user = null }) {
       <Card
         className="panel-card table-card"
         title={<Space><ShoppingOutlined className="panel-title-icon list" /><span>Danh sách sản phẩm</span></Space>}
-        extra={<Input className="search-input product-search-input" prefix={<SearchOutlined />} placeholder="Tìm tên, shop, ngành hàng..." value={search} onChange={(event) => setSearch(event.target.value)} allowClear />}
+        extra={<Input className="search-input product-search-input" prefix={<SearchOutlined />} placeholder="Tìm tên, shop, ngành hàng, ghi chú..." value={search} onChange={(event) => setSearch(event.target.value)} allowClear />}
       >
         <Table
           rowKey="id"
@@ -390,7 +458,7 @@ export default function ProductsPage({ user = null }) {
           dataSource={filteredProducts}
           loading={isLoading}
           pagination={{ pageSize: 20, hideOnSinglePage: true }}
-          scroll={{ x: 1130 }}
+          scroll={{ x: 1060 }}
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={search ? 'Không tìm thấy sản phẩm phù hợp' : 'Chưa có sản phẩm nào'} /> }}
         />
       </Card>

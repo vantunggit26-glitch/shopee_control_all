@@ -699,6 +699,24 @@
   width: 300px;
 }
 
+.product-note-input {
+  width: 100%;
+  min-width: 0;
+  resize: none;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.product-note-readonly {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
 .website-avatar {
   color: #08979c;
   background: #e6fffb;

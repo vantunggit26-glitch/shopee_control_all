@@ -47,6 +47,7 @@ rules_version = '2';
 //   - totalRatePercent: number (required, 0-100)
 //   - isXtra: boolean (required)
 //   - sourceUpdatedAt: string (required, 0-50 characters)
+//   - note: string (optional, 0-1000 characters)
 //   - createdAt: timestamp (required, immutable, server-managed)
 //   - updatedAt: timestamp (required, server-managed)
 //
@@ -209,6 +210,7 @@ service cloud.firestore {
           'totalRatePercent',
           'isXtra',
           'sourceUpdatedAt',
+          'note',
           'createdAt',
           'updatedAt'
         ])
@@ -257,6 +259,7 @@ service cloud.firestore {
         && data.isXtra is bool
         && data.sourceUpdatedAt is string
         && data.sourceUpdatedAt.size() <= 50
+        && isValidOptionalString(data, 'note', 1000)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
