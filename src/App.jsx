@@ -109,8 +109,9 @@ function formatCompactRelative(timestamp) {
 
   const days = Math.floor(hours / 24)
   if (days < 7) return `${days}d`
+  if (days < 30) return `${Math.floor(days / 7)}w`
 
-  return `${Math.floor(days / 7)}t`
+  return `${Math.floor(days / 30)}m`
 }
 
 function formatExactDate(timestamp) {

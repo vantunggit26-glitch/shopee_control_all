@@ -53,13 +53,19 @@ rules_version = '2';
 //
 // Collection: todo/{chatId_messageId}
 // Documents are created only by the trusted Telegram automation through the
-// Firebase Admin SDK. Authenticated app users may read them, while every client
+// Firebase Admin SDK. All visitors may read them, while every client
 // create/update/delete operation is denied. Relevant fields include:
 //   - text: string
 //   - messageDate/expiresAt/createdAt: timestamp
 //   - containsNewUserKeyword: boolean
 //   - detectedCodes/links: list
 //   - sourceLink/messageDay/chatTitle: string
+//
+// Collection: privateConfig/{configId}
+// Documents contain private integration configuration. Only the fixed
+// administrator may read them; all client writes are denied.
+// Fields for privateConfig/addlivetag:
+//   - apiKey: string (required, sensitive)
 //
 // Accounts and credentials belong to the authenticated user identified by
 // userId. Credential documents contain private plaintext data and are never
@@ -335,6 +341,12 @@ service cloud.firestore {
         && request.resource.data.updatedAt == request.time;
 
       allow delete: if isAdmin();
+    }
+
+    match /privateConfig/{configId} {
+      allow read: if isAdmin();
+
+      // No client writes are allowed. Configuration is managed through Admin SDK.
     }
 
     // All other paths are denied by default.

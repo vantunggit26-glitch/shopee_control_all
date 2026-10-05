@@ -637,6 +637,10 @@
   margin-bottom: 20px;
 }
 
+.product-api-alert {
+  margin-bottom: 18px;
+}
+
 .product-cell {
   min-width: 0;
   display: flex;

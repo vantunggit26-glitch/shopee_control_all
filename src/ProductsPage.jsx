@@ -151,10 +151,13 @@ function ProductNoteCell({ value, canManage, loading, onSave }) {
   )
 }
 
-async function fetchProduct(productUrl) {
+async function fetchProduct(productUrl, apiKey) {
   const response = await fetch(`${PRODUCT_API_URL}?url=${encodeURIComponent(productUrl)}`, {
     method: 'GET',
-    headers: { Accept: 'application/json' },
+    headers: {
+      Accept: 'application/json',
+      'X-API-Key': apiKey,
+    },
   })
 
   let payload
@@ -182,7 +185,31 @@ export default function ProductsPage({ user = null }) {
   const [isSaving, setIsSaving] = useState(false)
   const [deletingId, setDeletingId] = useState('')
   const [updatingNoteId, setUpdatingNoteId] = useState('')
+  const [productApiKey, setProductApiKey] = useState('')
+  const [apiConfigError, setApiConfigError] = useState('')
   const canManage = user?.email === FIREBASE_LOGIN_EMAIL
+
+  useEffect(() => {
+    if (!canManage) return undefined
+
+    let isActive = true
+    getDoc(doc(db, 'privateConfig', 'addlivetag'))
+      .then((snapshot) => {
+        if (!isActive) return
+        const apiKey = snapshot.exists() ? String(snapshot.data().apiKey || '').trim() : ''
+        setProductApiKey(apiKey)
+        setApiConfigError(apiKey ? '' : 'Chưa cấu hình API Key AddLiveTag.')
+      })
+      .catch(() => {
+        if (!isActive) return
+        setProductApiKey('')
+        setApiConfigError('Không thể tải API Key AddLiveTag dành cho quản trị viên.')
+      })
+
+    return () => {
+      isActive = false
+    }
+  }, [canManage])
 
   useEffect(() => {
     const productsQuery = query(
@@ -224,11 +251,16 @@ export default function ProductsPage({ user = null }) {
     if (!canManage) return
 
     const productUrl = values.productUrl.trim()
+    if (!productApiKey) {
+      setError('API Key AddLiveTag chưa được cấu hình. Vui lòng thử tải lại trang.')
+      return
+    }
+
     setIsSaving(true)
     setError('')
 
     try {
-      const payload = await fetchProduct(productUrl)
+      const payload = await fetchProduct(productUrl, productApiKey)
       const product = normalizeProduct(payload.productInfo, productUrl)
       const productId = `${product.shopId}_${product.itemId}`
       const productRef = doc(db, 'products', productId)
@@ -252,9 +284,6 @@ export default function ProductsPage({ user = null }) {
 
       form.resetFields()
 
-      if (payload.apiKeyNotice?.status === 'missing') {
-        message.warning('API bên thứ ba đang cảnh báo thiếu API key và có thể ngừng cho phép gọi trực tiếp.')
-      }
     } catch (saveError) {
       setError(saveError?.message || 'Không thể lấy và lưu sản phẩm. Vui lòng kiểm tra link rồi thử lại.')
     } finally {
@@ -419,6 +448,7 @@ export default function ProductsPage({ user = null }) {
 
       {canManage && (
         <Card className="panel-card" title={<Space><PlusOutlined className="panel-title-icon add" /><span>Thêm hoặc làm mới sản phẩm</span></Space>}>
+          {apiConfigError && <Alert className="product-api-alert" type="error" showIcon message={apiConfigError} />}
           <Form form={form} layout="vertical" requiredMark={false} onFinish={saveProduct}>
             <div className="product-form-grid">
               <Form.Item
@@ -432,7 +462,7 @@ export default function ProductsPage({ user = null }) {
               >
                 <Input size="large" prefix={<LinkOutlined />} placeholder="https://shopee.vn/... hoặc https://vn.shp.ee/..." maxLength={2048} />
               </Form.Item>
-              <Button type="primary" size="large" htmlType="submit" icon={<PlusOutlined />} loading={isSaving}>Lấy dữ liệu và lưu</Button>
+              <Button type="primary" size="large" htmlType="submit" icon={<PlusOutlined />} loading={isSaving} disabled={!productApiKey}>Lấy dữ liệu và lưu</Button>
             </div>
           </Form>
         </Card>
@@ -442,7 +472,7 @@ export default function ProductsPage({ user = null }) {
         className="product-source-alert"
         type="warning"
         showIcon
-        message="Dữ liệu được lấy từ API bên thứ ba không chính thức, có thể chậm, sai lệch hoặc yêu cầu API key trong tương lai."
+        message="Dữ liệu được lấy từ API bên thứ ba không chính thức và có thể chậm hoặc sai lệch."
       />
 
       {error && <Alert className="data-alert product-error-alert" type="error" message={error} showIcon closable onClose={() => setError('')} />}
