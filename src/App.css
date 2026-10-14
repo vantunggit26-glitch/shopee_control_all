@@ -395,7 +395,7 @@
 
 .account-form {
   display: grid;
-  grid-template-columns: minmax(260px, 1fr) 230px auto;
+  grid-template-columns: minmax(260px, 1fr) 320px auto;
   gap: 12px;
 }
 
@@ -420,6 +420,19 @@
   width: 100%;
   min-width: 0;
   font-size: 12px;
+}
+
+.empty-field-add-button {
+  width: 38px;
+  height: 30px;
+  color: #8c8c8c;
+  border-color: #d9d9d9;
+  border-radius: 7px;
+}
+
+.empty-field-add-button:hover {
+  color: #1677ff !important;
+  border-color: #1677ff !important;
 }
 
 .account-note-input {
@@ -473,6 +486,66 @@
   min-width: 0;
 }
 
+.table-status-select .ant-select-selector {
+  min-height: 30px;
+  padding: 2px 7px !important;
+  border-radius: 7px;
+}
+
+.table-status-select .ant-select-selection-overflow {
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: 5px;
+}
+
+.table-status-select.has-multiple-statuses .ant-select-selector {
+  min-height: 42px;
+}
+
+.table-status-select.has-multiple-statuses .ant-select-selection-overflow {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+}
+
+.table-status-select.has-multiple-statuses .ant-select-selection-overflow-item {
+  max-width: calc(100% - 4px);
+}
+
+.single-status-selection {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-inline: 1px;
+}
+
+.status-selection-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.multiple-status-selection {
+  min-width: 0;
+  max-width: 100%;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-inline: 1px;
+}
+
+.status-overflow-count {
+  flex: none;
+  color: #595959;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .accounts-table .ant-table {
   font-size: 12px;
 }
@@ -487,7 +560,8 @@
   padding: 10px 8px;
 }
 
-.accounts-table .table-status-select .ant-select-selection-item {
+.accounts-table .single-status-selection,
+.accounts-table .multiple-status-selection {
   font-size: 12px;
 }
 
@@ -623,7 +697,7 @@
 
 .product-form-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 190px minmax(0, 1fr) auto;
   align-items: end;
   gap: 12px;
 }
@@ -701,6 +775,10 @@
 
 .product-search-input {
   width: 300px;
+}
+
+.product-platform-filter {
+  width: 130px;
 }
 
 .product-note-input {
@@ -840,7 +918,8 @@
   .table-card .ant-card-head-title,
   .table-card .ant-card-extra,
   .search-input,
-  .product-search-input {
+  .product-search-input,
+  .product-platform-filter {
     width: 100%;
   }
 

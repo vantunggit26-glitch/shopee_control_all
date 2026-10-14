@@ -68,6 +68,8 @@ const STATUS_META = {
   'Tài khoản shopee mới': { color: '#13c2c2' },
   'Đang đặt đơn': { color: '#2f54eb' },
   'Đã sử dụng shopee': { color: '#52c41a' },
+  'Đang sử dụng Lazada': { color: '#ff7a00' },
+  'Đã sử dụng Lazada': { color: '#6f2da8' },
   'Đã khóa mã người mới': { color: '#ad6800' },
   'Đã khóa M02': { color: '#fa8c16' },
   'Đã khóa M04': { color: '#f5222d' },
@@ -75,6 +77,7 @@ const STATUS_META = {
 }
 
 const ACCOUNT_STATUSES = Object.keys(STATUS_META)
+const MAX_VISIBLE_STATUSES = 2
 const STATUS_OPTIONS = ACCOUNT_STATUSES.map((status) => ({
   value: status,
   label: (
@@ -84,6 +87,60 @@ const STATUS_OPTIONS = ACCOUNT_STATUSES.map((status) => ({
     </Space>
   ),
 }))
+
+function normalizeAccountStatuses(status) {
+  const statuses = Array.isArray(status) ? status : [status]
+  return [...new Set(statuses.filter((value) => ACCOUNT_STATUSES.includes(value)))]
+}
+
+function getAccountStatuses(status) {
+  const statuses = normalizeAccountStatuses(status)
+  return statuses.length > 0 ? statuses : [ACCOUNT_STATUSES[0]]
+}
+
+function isValidAccountStatuses(statuses) {
+  return Array.isArray(statuses)
+    && statuses.length > 0
+    && statuses.length <= ACCOUNT_STATUSES.length
+    && normalizeAccountStatuses(statuses).length === statuses.length
+}
+
+function renderOmittedStatuses(omittedValues) {
+  const omittedStatuses = omittedValues.map(({ value }) => value).join(', ')
+  return (
+    <Tooltip title={omittedStatuses}>
+      <span className="status-overflow-count">+{omittedValues.length}</span>
+    </Tooltip>
+  )
+}
+
+function renderStatusTag(selectedStatuses, showOverflowOnSecondLine = false) {
+  const selectedCount = selectedStatuses.length
+  const omittedStatuses = selectedStatuses.slice(MAX_VISIBLE_STATUSES)
+
+  return ({ value, label, isMaxTag }) => {
+    if (isMaxTag) return label
+
+    const selectedIndex = selectedStatuses.indexOf(value)
+    const statusContent = (
+      <>
+        <Badge color={STATUS_META[value]?.color || '#8c8c8c'} />
+        <span className="status-selection-label">{value}</span>
+        {showOverflowOnSecondLine && selectedIndex === 1 && omittedStatuses.length > 0 && (
+          <Tooltip title={omittedStatuses.join(', ')}>
+            <span className="status-overflow-count">+{omittedStatuses.length}</span>
+          </Tooltip>
+        )}
+      </>
+    )
+
+    if (selectedCount === 1) {
+      return <span className="single-status-selection">{statusContent}</span>
+    }
+
+    return <span className="multiple-status-selection">{statusContent}</span>
+  }
+}
 
 function getAuthErrorMessage(error) {
   const messages = {
@@ -153,15 +210,44 @@ function getTimestampMilliseconds(timestamp) {
   return timestamp?.toMillis?.() ?? timestamp?.toDate?.().getTime?.() ?? 0
 }
 
-function EditableAccountText({ value, placeholder, maxLength, loading, multiline = false, onSave }) {
+function EditableAccountText({
+  value,
+  placeholder,
+  maxLength,
+  loading,
+  multiline = false,
+  collapsedWhenEmpty = false,
+  onSave,
+}) {
   const [draft, setDraft] = useState(value || '')
+  const [isEditing, setIsEditing] = useState(!collapsedWhenEmpty || Boolean(value))
 
   async function saveDraft() {
     const normalizedValue = draft.trim()
-    if (normalizedValue === (value || '')) return
+    if (normalizedValue === (value || '')) {
+      if (collapsedWhenEmpty && !normalizedValue) setIsEditing(false)
+      return
+    }
 
     const saved = await onSave(normalizedValue)
-    if (!saved) setDraft(value || '')
+    if (!saved) {
+      setDraft(value || '')
+      if (collapsedWhenEmpty && !value) setIsEditing(false)
+    }
+  }
+
+  if (collapsedWhenEmpty && !value && !isEditing) {
+    return (
+      <Button
+        className="empty-field-add-button"
+        type="dashed"
+        size="small"
+        icon={<PlusOutlined />}
+        disabled={loading}
+        onClick={() => setIsEditing(true)}
+        aria-label={`Thêm ${placeholder.toLocaleLowerCase('vi')}`}
+      />
+    )
   }
 
   if (multiline) {
@@ -188,6 +274,7 @@ function EditableAccountText({ value, placeholder, maxLength, loading, multiline
       maxLength={maxLength}
       disabled={loading}
       suffix={loading ? <Spin size="small" /> : null}
+      autoFocus={collapsedWhenEmpty && isEditing}
       onChange={(event) => setDraft(event.target.value)}
       onBlur={saveDraft}
       onPressEnter={(event) => event.currentTarget.blur()}
@@ -281,7 +368,7 @@ function Dashboard({ user, onLogout }) {
   const { message, modal } = AntApp.useApp()
   const [accounts, setAccounts] = useState([])
   const [newAccount, setNewAccount] = useState('')
-  const [newStatus, setNewStatus] = useState(ACCOUNT_STATUSES[0])
+  const [newStatus, setNewStatus] = useState([ACCOUNT_STATUSES[0]])
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [isLoading, setIsLoading] = useState(true)
@@ -330,8 +417,9 @@ function Dashboard({ user, onLogout }) {
   const filteredAccounts = useMemo(() => {
     const searchText = search.trim().toLocaleLowerCase('vi')
     return accounts.filter((account) => {
-      const matchesStatus = statusFilter === 'all' || account.status === statusFilter
-      const searchableText = `${account.name} ${account.status || ''} ${account.note || ''} ${account.trackingCode || ''}`
+      const accountStatuses = getAccountStatuses(account.status)
+      const matchesStatus = statusFilter === 'all' || accountStatuses.includes(statusFilter)
+      const searchableText = `${account.name} ${accountStatuses.join(' ')} ${account.note || ''} ${account.trackingCode || ''}`
         .toLocaleLowerCase('vi')
       const matchesSearch = !searchText || searchableText.includes(searchText)
       return matchesStatus && matchesSearch
@@ -339,12 +427,14 @@ function Dashboard({ user, onLogout }) {
   }, [accounts, search, statusFilter])
 
   async function saveAccount(name, status) {
+    if (!isValidAccountStatuses(status)) return
+
     setIsSaving(true)
     setDataError('')
     try {
       await addDoc(collection(db, 'users', user.uid, 'accounts'), {
         name,
-        status,
+        status: normalizeAccountStatuses(status),
         note: '',
         trackingCode: '',
         createdAt: serverTimestamp(),
@@ -402,14 +492,14 @@ function Dashboard({ user, onLogout }) {
     }
   }
 
-  async function updateAccountStatus(id, status) {
-    if (!ACCOUNT_STATUSES.includes(status)) return
+  async function updateAccountStatus(id, statuses) {
+    if (!isValidAccountStatuses(statuses)) return
 
     setUpdatingId(id)
     setDataError('')
     try {
       await updateDoc(doc(db, 'users', user.uid, 'accounts', id), {
-        status,
+        status: normalizeAccountStatuses(statuses),
         updatedAt: serverTimestamp(),
       })
       message.success('Đã cập nhật trạng thái')
@@ -472,26 +562,34 @@ function Dashboard({ user, onLogout }) {
       title: 'Trạng thái',
       dataIndex: 'status',
       key: 'status',
-      width: 180,
+      width: 240,
       sorter: (left, right) => {
-        const leftIndex = ACCOUNT_STATUSES.indexOf(left.status)
-        const rightIndex = ACCOUNT_STATUSES.indexOf(right.status)
+        const leftIndex = ACCOUNT_STATUSES.indexOf(getAccountStatuses(left.status)[0])
+        const rightIndex = ACCOUNT_STATUSES.indexOf(getAccountStatuses(right.status)[0])
         return (leftIndex < 0 ? ACCOUNT_STATUSES.length : leftIndex)
           - (rightIndex < 0 ? ACCOUNT_STATUSES.length : rightIndex)
       },
       sortDirections: ['ascend', 'descend'],
-      render: (status, record) => (
-        <Select
-          className="table-status-select"
-          size="small"
-          value={status || ACCOUNT_STATUSES[0]}
-          options={STATUS_OPTIONS}
-          loading={updatingId === record.id}
-          disabled={updatingId === record.id}
-          onChange={(value) => updateAccountStatus(record.id, value)}
-          aria-label={`Trạng thái của ${record.name}`}
-        />
-      ),
+      render: (status, record) => {
+        const selectedStatuses = getAccountStatuses(status)
+        return (
+          <Select
+            className={`table-status-select ${selectedStatuses.length === 1 ? 'has-single-status' : 'has-multiple-statuses'}`}
+            mode="multiple"
+            value={selectedStatuses}
+            options={STATUS_OPTIONS}
+            tagRender={renderStatusTag(selectedStatuses, true)}
+            maxTagCount={MAX_VISIBLE_STATUSES}
+            maxTagPlaceholder={() => null}
+            popupMatchSelectWidth
+            showSearch={false}
+            loading={updatingId === record.id}
+            disabled={updatingId === record.id}
+            onChange={(value) => updateAccountStatus(record.id, value)}
+            aria-label={`Trạng thái của ${record.name}`}
+          />
+        )
+      },
     },
     {
       title: 'Cập nhật',
@@ -533,6 +631,7 @@ function Dashboard({ user, onLogout }) {
           placeholder="Mã vận đơn..."
           maxLength={100}
           loading={updatingField === `${record.id}:trackingCode`}
+          collapsedWhenEmpty
           onSave={(value) => updateAccountTextField(record.id, 'trackingCode', value)}
         />
       ),
@@ -646,9 +745,17 @@ function Dashboard({ user, onLogout }) {
             />
             <Select
               size="large"
+              mode="multiple"
               value={newStatus}
               options={STATUS_OPTIONS}
-              onChange={setNewStatus}
+              tagRender={renderStatusTag(newStatus)}
+              maxTagCount={MAX_VISIBLE_STATUSES}
+              maxTagPlaceholder={renderOmittedStatuses}
+              popupMatchSelectWidth={320}
+              showSearch={false}
+              onChange={(statuses) => {
+                if (statuses.length > 0) setNewStatus(statuses)
+              }}
               aria-label="Trạng thái tài khoản mới"
             />
             <Button size="large" type="primary" htmlType="submit" icon={<PlusOutlined />} loading={isSaving} disabled={!newAccount.trim()}>
@@ -688,7 +795,7 @@ function Dashboard({ user, onLogout }) {
             loading={isLoading}
             pagination={false}
             tableLayout="fixed"
-            scroll={{ x: 930 }}
+            scroll={{ x: 1030 }}
             locale={{
               emptyText: (
                 <Empty

@@ -1,5 +1,18 @@
 # React + Vite
 
+## Kho sản phẩm Shopee và Lazada
+
+Quản trị viên có thể chọn sàn, dán link sản phẩm Shopee/Lazada rồi lưu vào
+chung collection Firestore `products`. Link Lazada đầy đủ và link rút gọn
+`s.lazada.vn` đều được hỗ trợ. Bảng sản phẩm dùng chung có nhãn và bộ lọc theo
+sàn; các tài liệu Shopee cũ chưa có trường `platform` vẫn được nhận diện là
+Shopee.
+
+Dữ liệu sản phẩm được lấy qua API AddLiveTag bên thứ ba. Cấu hình API key nằm
+trong `privateConfig/addlivetag`; không ghi API key, cookie hoặc mật khẩu vào mã
+nguồn. Dữ liệu Lazada có thể thiếu đánh giá hoặc một số trường khác, khi đó giao
+diện hiển thị “Chưa có dữ liệu” thay vì tự tạo giá trị.
+
 ## Đồng bộ Telegram mỗi giờ
 
 Workflow `.github/workflows/telegram-hourly-sync.yml` chạy vào phút 17 mỗi giờ,
