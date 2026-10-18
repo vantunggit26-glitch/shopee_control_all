@@ -15,6 +15,7 @@ rules_version = '2';
 //   - trackingCode: string (optional, 0-100 characters)
 //   - imageSlots: list (optional, unique subset of slot1 and slot2)
 //   - images: empty list (optional legacy field retained for compatibility)
+//   - isPinned: boolean (optional, controls persistent top placement)
 //   - createdAt: timestamp (required, immutable)
 //   - updatedAt: timestamp (required, server-managed)
 //
@@ -196,6 +197,7 @@ service cloud.firestore {
           'trackingCode',
           'imageSlots',
           'images',
+          'isPinned',
           'createdAt',
           'updatedAt'
         ])
@@ -207,6 +209,7 @@ service cloud.firestore {
         && isValidOptionalString(data, 'trackingCode', 100)
         && isValidAccountImageSlots(data)
         && isValidLegacyAccountImages(data)
+        && (!('isPinned' in data) || data.isPinned is bool)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }

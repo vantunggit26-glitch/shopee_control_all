@@ -560,6 +560,28 @@
   padding: 10px 8px;
 }
 
+.accounts-table .ant-table-tbody > tr.pinned-account-row > td {
+  background: #fffbe6;
+}
+
+.accounts-table .ant-table-tbody > tr.pinned-account-row:hover > td {
+  background: #fff4c2 !important;
+}
+
+.accounts-table .ant-table-tbody > tr.pinned-account-row > td:first-child {
+  box-shadow: inset 3px 0 0 #faad14;
+}
+
+.pin-action-button.is-pinned {
+  color: #d48806;
+  background: #fff1b8;
+}
+
+.pin-action-button.is-pinned:hover {
+  color: #ad6800 !important;
+  background: #ffe58f !important;
+}
+
 .accounts-table .single-status-selection,
 .accounts-table .multiple-status-selection {
   font-size: 12px;

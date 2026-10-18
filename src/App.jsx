@@ -40,6 +40,8 @@ import {
   LogoutOutlined,
   PlusOutlined,
   PictureOutlined,
+  PushpinFilled,
+  PushpinOutlined,
   SafetyCertificateFilled,
   SearchOutlined,
   ShoppingOutlined,
@@ -448,11 +450,13 @@ function Dashboard({ user, onLogout }) {
   const [newStatus, setNewStatus] = useState([ACCOUNT_STATUSES[0]])
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
+  const [accountSort, setAccountSort] = useState({ field: '', order: null })
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [updatingId, setUpdatingId] = useState('')
   const [updatingField, setUpdatingField] = useState('')
   const [deletingId, setDeletingId] = useState('')
+  const [pinningId, setPinningId] = useState('')
   const [uploadingAccountId, setUploadingAccountId] = useState('')
   const [deletingImageId, setDeletingImageId] = useState('')
   const [selectedAccountId, setSelectedAccountId] = useState('')
@@ -532,6 +536,27 @@ function Dashboard({ user, onLogout }) {
     })
   }, [accounts, search, statusFilter])
 
+  const displayedAccounts = useMemo(() => [...filteredAccounts].sort((left, right) => {
+    const pinnedComparison = Number(Boolean(right.isPinned)) - Number(Boolean(left.isPinned))
+    if (pinnedComparison !== 0) return pinnedComparison
+    if (!accountSort.order) return 0
+
+    let comparison = 0
+    if (accountSort.field === 'name') {
+      comparison = compareVietnameseText(left.name, right.name)
+    } else if (accountSort.field === 'status') {
+      const leftIndex = ACCOUNT_STATUSES.indexOf(getAccountStatuses(left.status)[0])
+      const rightIndex = ACCOUNT_STATUSES.indexOf(getAccountStatuses(right.status)[0])
+      comparison = (leftIndex < 0 ? ACCOUNT_STATUSES.length : leftIndex)
+        - (rightIndex < 0 ? ACCOUNT_STATUSES.length : rightIndex)
+    } else if (accountSort.field === 'updatedAt') {
+      comparison = getTimestampMilliseconds(left.updatedAt || left.createdAt)
+        - getTimestampMilliseconds(right.updatedAt || right.createdAt)
+    }
+
+    return accountSort.order === 'descend' ? -comparison : comparison
+  }), [accountSort, filteredAccounts])
+
   const selectedAccount = useMemo(
     () => accounts.find((account) => account.id === selectedAccountId) || null,
     [accounts, selectedAccountId],
@@ -561,6 +586,7 @@ function Dashboard({ user, onLogout }) {
         note: '',
         trackingCode: '',
         imageSlots: [],
+        isPinned: false,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       })
@@ -707,6 +733,30 @@ function Dashboard({ user, onLogout }) {
     }
   }
 
+  async function toggleAccountPin(account) {
+    const nextPinned = !account.isPinned
+    setPinningId(account.id)
+    setDataError('')
+    try {
+      await updateDoc(doc(db, 'users', user.uid, 'accounts', account.id), {
+        isPinned: nextPinned,
+        updatedAt: serverTimestamp(),
+      })
+      message.success(nextPinned ? 'Đã ghim tài khoản lên đầu' : 'Đã bỏ ghim tài khoản')
+    } catch {
+      setDataError('Không thể cập nhật trạng thái ghim. Vui lòng thử lại.')
+    } finally {
+      setPinningId('')
+    }
+  }
+
+  function handleAccountTableChange(_pagination, _filters, sorter) {
+    const activeSorter = Array.isArray(sorter) ? sorter[0] : sorter
+    setAccountSort(activeSorter?.order
+      ? { field: activeSorter.field || activeSorter.columnKey, order: activeSorter.order }
+      : { field: '', order: null })
+  }
+
   async function updateAccountStatus(id, statuses) {
     if (!isValidAccountStatuses(statuses)) return
 
@@ -761,7 +811,8 @@ function Dashboard({ user, onLogout }) {
       dataIndex: 'name',
       key: 'name',
       width: 150,
-      sorter: (left, right) => compareVietnameseText(left.name, right.name),
+      sorter: true,
+      sortOrder: accountSort.field === 'name' ? accountSort.order : null,
       sortDirections: ['ascend', 'descend'],
       render: (name) => (
         <Space size={8}>
@@ -778,12 +829,8 @@ function Dashboard({ user, onLogout }) {
       dataIndex: 'status',
       key: 'status',
       width: 205,
-      sorter: (left, right) => {
-        const leftIndex = ACCOUNT_STATUSES.indexOf(getAccountStatuses(left.status)[0])
-        const rightIndex = ACCOUNT_STATUSES.indexOf(getAccountStatuses(right.status)[0])
-        return (leftIndex < 0 ? ACCOUNT_STATUSES.length : leftIndex)
-          - (rightIndex < 0 ? ACCOUNT_STATUSES.length : rightIndex)
-      },
+      sorter: true,
+      sortOrder: accountSort.field === 'status' ? accountSort.order : null,
       sortDirections: ['ascend', 'descend'],
       render: (status, record) => {
         const selectedStatuses = getAccountStatuses(status)
@@ -810,8 +857,8 @@ function Dashboard({ user, onLogout }) {
       title: 'Cập nhật',
       key: 'updatedAt',
       width: 86,
-      sorter: (left, right) => getTimestampMilliseconds(left.updatedAt || left.createdAt)
-        - getTimestampMilliseconds(right.updatedAt || right.createdAt),
+      sorter: true,
+      sortOrder: accountSort.field === 'updatedAt' ? accountSort.order : null,
       sortDirections: ['descend', 'ascend'],
       render: (_value, record) => {
         const updatedAt = record.updatedAt || record.createdAt
@@ -854,7 +901,7 @@ function Dashboard({ user, onLogout }) {
     {
       title: 'Hành động',
       key: 'action',
-      width: 150,
+      width: 180,
       align: 'center',
       render: (_value, record) => {
         const trackingCode = String(record.trackingCode || '').trim()
@@ -884,6 +931,16 @@ function Dashboard({ user, onLogout }) {
                 />
               </Tooltip>
             )}
+            <Tooltip title={record.isPinned ? 'Bỏ ghim' : 'Ghim lên đầu'}>
+              <Button
+                className={`pin-action-button ${record.isPinned ? 'is-pinned' : ''}`}
+                type="text"
+                icon={record.isPinned ? <PushpinFilled /> : <PushpinOutlined />}
+                loading={pinningId === record.id}
+                onClick={() => toggleAccountPin(record)}
+                aria-label={`${record.isPinned ? 'Bỏ ghim' : 'Ghim'} ${record.name}`}
+              />
+            </Tooltip>
             <Popconfirm
               title="Xóa tài khoản?"
               description="Bản ghi sẽ bị xóa khỏi Firestore."
@@ -1022,11 +1079,13 @@ function Dashboard({ user, onLogout }) {
             className="accounts-table"
             rowKey="id"
             columns={columns}
-            dataSource={filteredAccounts}
+            dataSource={displayedAccounts}
             loading={isLoading}
             pagination={false}
             tableLayout="fixed"
-            scroll={{ x: 860 }}
+            scroll={{ x: 890 }}
+            rowClassName={(record) => (record.isPinned ? 'pinned-account-row' : '')}
+            onChange={handleAccountTableChange}
             locale={{
               emptyText: (
                 <Empty
@@ -1075,6 +1134,7 @@ function Dashboard({ user, onLogout }) {
                   { key: 'createdAt', label: 'Ngày tạo', children: formatExactDate(selectedAccount.createdAt) },
                   { key: 'updatedAt', label: 'Cập nhật', children: formatExactDate(selectedAccount.updatedAt || selectedAccount.createdAt) },
                   { key: 'trackingCode', label: 'Mã vận đơn', children: selectedAccount.trackingCode || 'Không có' },
+                  { key: 'isPinned', label: 'Ghim', children: selectedAccount.isPinned ? 'Đang ghim' : 'Không ghim' },
                   { key: 'note', label: 'Ghi chú', children: selectedAccount.note || 'Không có', span: 2 },
                 ]}
               />
