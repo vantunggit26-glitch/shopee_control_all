@@ -566,7 +566,7 @@
 }
 
 .accounts-table .account-cell > .ant-typography:first-child {
-  max-width: 140px;
+  max-width: 100px;
   font-size: 12px;
 }
 
@@ -587,6 +587,72 @@
 .account-time-tooltip {
   display: grid;
   gap: 4px;
+  font-size: 12px;
+}
+
+.account-images-modal .ant-modal-body {
+  padding-top: 8px;
+}
+
+.account-details .ant-descriptions-item-content {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.account-images-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 22px 0 12px;
+}
+
+.account-images-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.account-images-loading {
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.account-image-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #e5e9f0;
+  border-radius: 12px;
+  background: #fafbff;
+}
+
+.account-image-card .ant-image {
+  display: block;
+  width: 100%;
+}
+
+.account-image-card .ant-image-img {
+  width: 100%;
+  height: 230px;
+  object-fit: contain;
+  background: #f2f4f8;
+}
+
+.account-image-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px;
+}
+
+.account-image-meta > .ant-typography {
+  min-width: 0;
+  max-width: 190px;
   font-size: 12px;
 }
 
@@ -665,6 +731,10 @@
 
 .telegram-filter-select {
   min-width: 190px;
+}
+
+.telegram-platform-filter {
+  min-width: 160px;
 }
 
 .telegram-search-input {
@@ -930,12 +1000,26 @@
   }
 
   .telegram-search-input,
-  .telegram-filter-select {
+  .telegram-filter-select,
+  .telegram-platform-filter {
     width: 100%;
+  }
+
+  .telegram-platform-filter .ant-segmented-group {
+    width: 100%;
+  }
+
+  .telegram-platform-filter .ant-segmented-item {
+    flex: 1;
+    text-align: center;
   }
 
   .table-card > .ant-card-body {
     padding: 0;
+  }
+
+  .account-images-grid {
+    grid-template-columns: 1fr;
   }
 }
 

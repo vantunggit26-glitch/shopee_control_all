@@ -13,8 +13,18 @@ rules_version = '2';
 //     status is edited, at which point the client migrates it to a list.
 //   - note: string (optional, 0-1000 characters)
 //   - trackingCode: string (optional, 0-100 characters)
+//   - imageSlots: list (optional, unique subset of slot1 and slot2)
+//   - images: empty list (optional legacy field retained for compatibility)
 //   - createdAt: timestamp (required, immutable)
 //   - updatedAt: timestamp (required, server-managed)
+//
+// Subcollection: users/{userId}/accounts/{accountId}/images/{slot1|slot2}
+// Fields:
+//   - dataUrl: string (required, Base64 image data URL, at most 680000 chars)
+//   - fileName: string (required, 1-255 characters)
+//   - contentType: string (required, JPEG, PNG or WEBP)
+//   - size: integer (required, 1-510000 compressed bytes)
+//   - createdAt: timestamp (required, immutable, server-managed)
 //
 // Collection: users/{userId}/credentials/{credentialId}
 // Document ID: Firestore-generated ID
@@ -24,6 +34,12 @@ rules_version = '2';
 //   - username: string (required, 1-320 characters)
 //   - password: string (required, 1-500 characters)
 //   - createdAt: timestamp (required, immutable)
+//   - updatedAt: timestamp (required, server-managed)
+//
+// Collection: users/{userId}/preferences/discountCodes
+// Document ID: fixed value discountCodes
+// Fields:
+//   - voucherPlatform: string (required, shopee or lazada)
 //   - updatedAt: timestamp (required, server-managed)
 //
 // Collection: discountCodes/{discountCodeId}
@@ -70,11 +86,11 @@ rules_version = '2';
 // Fields for privateConfig/addlivetag:
 //   - apiKey: string (required, sensitive)
 //
-// Accounts and credentials belong to the authenticated user identified by
-// userId. Credential documents contain private plaintext data and are never
-// readable by other users. Discount codes and products contain no private user
-// data and are intentionally public to read; only the fixed administrator can
-// write them.
+// Accounts, credentials and preferences belong to the authenticated user
+// identified by userId. Credential documents contain private plaintext data
+// and are never readable by other users. Discount codes and products contain
+// no private user data and are intentionally public to read; only the fixed
+// administrator can write them.
 // ===============================================================
 
 service cloud.firestore {
@@ -158,17 +174,74 @@ service cloud.firestore {
           ]));
     }
 
+    function isValidLegacyAccountImages(data) {
+      return !('images' in data)
+        || (data.images is list && data.images.size() == 0);
+    }
+
+    function isValidAccountImageSlots(data) {
+      return !('imageSlots' in data)
+        || (data.imageSlots is list
+          && data.imageSlots.size() <= 2
+          && data.imageSlots.toSet().size() == data.imageSlots.size()
+          && data.imageSlots.hasOnly(['slot1', 'slot2']));
+    }
+
     function isValidAccount(data) {
       return hasRequiredFields(data, ['name', 'status', 'createdAt', 'updatedAt'])
-        && hasOnlyAllowedFields(data, ['name', 'status', 'note', 'trackingCode', 'createdAt', 'updatedAt'])
+        && hasOnlyAllowedFields(data, [
+          'name',
+          'status',
+          'note',
+          'trackingCode',
+          'imageSlots',
+          'images',
+          'createdAt',
+          'updatedAt'
+        ])
         && data.name is string
         && data.name.size() >= 1
         && data.name.size() <= 300
         && isValidAccountStatus(data.status)
         && isValidOptionalString(data, 'note', 1000)
         && isValidOptionalString(data, 'trackingCode', 100)
+        && isValidAccountImageSlots(data)
+        && isValidLegacyAccountImages(data)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
+    }
+
+    function isValidAccountImageData(data) {
+      return hasRequiredFields(data, [
+          'dataUrl',
+          'fileName',
+          'contentType',
+          'size',
+          'createdAt'
+        ])
+        && hasOnlyAllowedFields(data, [
+          'dataUrl',
+          'fileName',
+          'contentType',
+          'size',
+          'createdAt'
+        ])
+        && data.dataUrl is string
+        && data.dataUrl.size() >= 1
+        && data.dataUrl.size() <= 680000
+        && ((data.contentType == 'image/jpeg'
+            && data.dataUrl.matches('^data:image/jpeg;base64,.*'))
+          || (data.contentType == 'image/png'
+            && data.dataUrl.matches('^data:image/png;base64,.*'))
+          || (data.contentType == 'image/webp'
+            && data.dataUrl.matches('^data:image/webp;base64,.*')))
+        && data.fileName is string
+        && data.fileName.size() >= 1
+        && data.fileName.size() <= 255
+        && data.size is int
+        && data.size >= 1
+        && data.size <= 510000
+        && data.createdAt is timestamp;
     }
 
     function isValidCredential(data) {
@@ -188,6 +261,14 @@ service cloud.firestore {
         && data.password.size() >= 1
         && data.password.size() <= 500
         && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidDiscountCodePreference(data) {
+      return hasRequiredFields(data, ['voucherPlatform', 'updatedAt'])
+        && hasOnlyAllowedFields(data, ['voucherPlatform', 'updatedAt'])
+        && data.voucherPlatform is string
+        && data.voucherPlatform in ['shopee', 'lazada']
         && data.updatedAt is timestamp;
     }
 
@@ -331,6 +412,21 @@ service cloud.firestore {
       allow delete: if isOwner(userId);
     }
 
+    match /users/{userId}/accounts/{accountId}/images/{imageId} {
+      allow read: if isOwner(userId)
+        && exists(/databases/$(database)/documents/users/$(userId)/accounts/$(accountId));
+
+      allow create: if isOwner(userId)
+        && imageId in ['slot1', 'slot2']
+        && existsAfter(/databases/$(database)/documents/users/$(userId)/accounts/$(accountId))
+        && isValidAccountImageData(request.resource.data)
+        && request.resource.data.createdAt == request.time;
+
+      allow delete: if isOwner(userId);
+
+      // Image contents are immutable; delete and create a slot to replace one.
+    }
+
     match /users/{userId}/credentials/{credentialId} {
       allow read: if isOwner(userId);
 
@@ -343,6 +439,18 @@ service cloud.firestore {
       allow delete: if isOwner(userId);
 
       // Credential edits are not supported; replace the record instead.
+    }
+
+    match /users/{userId}/preferences/{preferenceId} {
+      allow read: if isOwner(userId)
+        && preferenceId == 'discountCodes';
+
+      allow create, update: if isOwner(userId)
+        && preferenceId == 'discountCodes'
+        && isValidDiscountCodePreference(request.resource.data)
+        && request.resource.data.updatedAt == request.time;
+
+      // Preference deletion is intentionally not exposed to the client.
     }
 
     match /discountCodes/{discountCodeId} {

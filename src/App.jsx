@@ -7,11 +7,14 @@ import {
   Button,
   Card,
   ConfigProvider,
+  Descriptions,
   Empty,
   Form,
   Input,
+  Image,
   Layout,
   Menu,
+  Modal,
   Popconfirm,
   Select,
   Space,
@@ -21,12 +24,14 @@ import {
   Tag,
   Tooltip,
   Typography,
+  Upload,
 } from 'antd'
 import viVN from 'antd/locale/vi_VN'
 import {
   ArrowRightOutlined,
   CloudSyncOutlined,
   DeleteOutlined,
+  EyeOutlined,
   FileTextOutlined,
   FilterOutlined,
   GiftOutlined,
@@ -34,11 +39,12 @@ import {
   LockOutlined,
   LogoutOutlined,
   PlusOutlined,
+  PictureOutlined,
   SafetyCertificateFilled,
   SearchOutlined,
   ShoppingOutlined,
-  TruckOutlined,
   UnorderedListOutlined,
+  UploadOutlined,
   UserOutlined,
   GlobalOutlined,
 } from '@ant-design/icons'
@@ -46,13 +52,15 @@ import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebas
 import {
   addDoc,
   collection,
-  deleteDoc,
   doc,
+  getDocs,
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
   updateDoc,
+  writeBatch,
 } from 'firebase/firestore'
 import { auth, db, FIREBASE_LOGIN_EMAIL } from './firebase'
 import CredentialsPage from './CredentialsPage'
@@ -78,6 +86,12 @@ const STATUS_META = {
 
 const ACCOUNT_STATUSES = Object.keys(STATUS_META)
 const MAX_VISIBLE_STATUSES = 2
+const MAX_ACCOUNT_IMAGES = 2
+const MAX_SOURCE_IMAGE_SIZE = 5 * 1024 * 1024
+const MAX_ENCODED_IMAGE_LENGTH = 680000
+const MAX_IMAGE_DIMENSION = 1800
+const ACCOUNT_IMAGE_SLOTS = ['slot1', 'slot2']
+const ACCOUNT_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp']
 const STATUS_OPTIONS = ACCOUNT_STATUSES.map((status) => ({
   value: status,
   label: (
@@ -208,6 +222,69 @@ function compareVietnameseText(left, right) {
 
 function getTimestampMilliseconds(timestamp) {
   return timestamp?.toMillis?.() ?? timestamp?.toDate?.().getTime?.() ?? 0
+}
+
+function getAccountImageSlots(slots) {
+  if (!Array.isArray(slots)) return []
+  return [...new Set(slots.filter((slot) => ACCOUNT_IMAGE_SLOTS.includes(slot)))]
+    .slice(0, MAX_ACCOUNT_IMAGES)
+}
+
+function readBlobAsDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(new Error('READ_IMAGE_FAILED'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+function canvasToBlob(canvas, contentType, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error('COMPRESS_IMAGE_FAILED'))),
+      contentType,
+      quality,
+    )
+  })
+}
+
+async function prepareAccountImage(file) {
+  const originalDataUrl = await readBlobAsDataUrl(file)
+  if (originalDataUrl.length <= MAX_ENCODED_IMAGE_LENGTH) {
+    return { dataUrl: originalDataUrl, contentType: file.type, size: file.size }
+  }
+
+  const bitmap = await createImageBitmap(file)
+  const canvas = document.createElement('canvas')
+  const context = canvas.getContext('2d')
+  let scale = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(bitmap.width, bitmap.height))
+  let quality = 0.86
+
+  try {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+      context.clearRect(0, 0, canvas.width, canvas.height)
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+
+      const blob = await canvasToBlob(canvas, 'image/webp', quality)
+      const dataUrl = await readBlobAsDataUrl(blob)
+      if (dataUrl.length <= MAX_ENCODED_IMAGE_LENGTH) {
+        return { dataUrl, contentType: 'image/webp', size: blob.size }
+      }
+
+      if (quality > 0.5) quality -= 0.1
+      else {
+        scale *= 0.8
+        quality = 0.76
+      }
+    }
+  } finally {
+    bitmap.close()
+  }
+
+  throw new Error('IMAGE_TOO_LARGE_AFTER_COMPRESSION')
 }
 
 function EditableAccountText({
@@ -376,6 +453,11 @@ function Dashboard({ user, onLogout }) {
   const [updatingId, setUpdatingId] = useState('')
   const [updatingField, setUpdatingField] = useState('')
   const [deletingId, setDeletingId] = useState('')
+  const [uploadingAccountId, setUploadingAccountId] = useState('')
+  const [deletingImageId, setDeletingImageId] = useState('')
+  const [selectedAccountId, setSelectedAccountId] = useState('')
+  const [accountImages, setAccountImages] = useState([])
+  const [areImagesLoading, setAreImagesLoading] = useState(false)
   const [dataError, setDataError] = useState('')
   const [activePage, setActivePage] = useState('accounts')
 
@@ -414,17 +496,58 @@ function Dashboard({ user, onLogout }) {
     }
   }, [user.uid])
 
+  useEffect(() => {
+    if (!selectedAccountId) return undefined
+
+    const imagesQuery = query(
+      collection(db, 'users', user.uid, 'accounts', selectedAccountId, 'images'),
+      orderBy('createdAt', 'asc'),
+    )
+    return onSnapshot(
+      imagesQuery,
+      (snapshot) => {
+        setAccountImages(snapshot.docs.map((imageDoc) => ({
+          id: imageDoc.id,
+          ...imageDoc.data(),
+        })))
+        setAreImagesLoading(false)
+      },
+      () => {
+        setAccountImages([])
+        setAreImagesLoading(false)
+        setDataError('Không thể tải hình ảnh từ Firestore. Vui lòng thử lại.')
+      },
+    )
+  }, [selectedAccountId, user.uid])
+
   const filteredAccounts = useMemo(() => {
     const searchText = search.trim().toLocaleLowerCase('vi')
     return accounts.filter((account) => {
       const accountStatuses = getAccountStatuses(account.status)
       const matchesStatus = statusFilter === 'all' || accountStatuses.includes(statusFilter)
-      const searchableText = `${account.name} ${accountStatuses.join(' ')} ${account.note || ''} ${account.trackingCode || ''}`
+      const searchableText = `${account.name} ${accountStatuses.join(' ')} ${account.note || ''}`
         .toLocaleLowerCase('vi')
       const matchesSearch = !searchText || searchableText.includes(searchText)
       return matchesStatus && matchesSearch
     })
   }, [accounts, search, statusFilter])
+
+  const selectedAccount = useMemo(
+    () => accounts.find((account) => account.id === selectedAccountId) || null,
+    [accounts, selectedAccountId],
+  )
+
+  function openAccountDetails(accountId) {
+    setAccountImages([])
+    setAreImagesLoading(true)
+    setSelectedAccountId(accountId)
+  }
+
+  function closeAccountDetails() {
+    setSelectedAccountId('')
+    setAccountImages([])
+    setAreImagesLoading(false)
+  }
 
   async function saveAccount(name, status) {
     if (!isValidAccountStatuses(status)) return
@@ -437,6 +560,7 @@ function Dashboard({ user, onLogout }) {
         status: normalizeAccountStatuses(status),
         note: '',
         trackingCode: '',
+        imageSlots: [],
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       })
@@ -479,16 +603,107 @@ function Dashboard({ user, onLogout }) {
     return saveAccount(name, newStatus)
   }
 
-  async function removeAccount(id) {
-    setDeletingId(id)
+  async function removeAccount(account) {
+    setDeletingId(account.id)
     setDataError('')
     try {
-      await deleteDoc(doc(db, 'users', user.uid, 'accounts', id))
+      const accountReference = doc(db, 'users', user.uid, 'accounts', account.id)
+      const imageDocuments = await getDocs(collection(accountReference, 'images'))
+      const batch = writeBatch(db)
+      imageDocuments.forEach((imageDocument) => batch.delete(imageDocument.ref))
+      batch.delete(accountReference)
+      await batch.commit()
+      if (selectedAccountId === account.id) closeAccountDetails()
       message.success('Đã xóa bản ghi')
     } catch {
       setDataError('Không thể xóa bản ghi. Vui lòng thử lại.')
     } finally {
       setDeletingId('')
+    }
+  }
+
+  async function uploadAccountImage(account, file) {
+    if (!ACCOUNT_IMAGE_TYPES.includes(file?.type)) {
+      message.error('Chỉ hỗ trợ ảnh JPG, PNG hoặc WEBP.')
+      return
+    }
+    if (!file.size || file.size > MAX_SOURCE_IMAGE_SIZE) {
+      message.error('Ảnh gốc phải nhỏ hơn hoặc bằng 5 MB.')
+      return
+    }
+    if (getAccountImageSlots(account.imageSlots).length >= MAX_ACCOUNT_IMAGES) {
+      message.warning('Mỗi tài khoản chỉ được lưu tối đa 2 ảnh.')
+      return
+    }
+
+    const accountReference = doc(db, 'users', user.uid, 'accounts', account.id)
+
+    setUploadingAccountId(account.id)
+    setDataError('')
+    try {
+      const preparedImage = await prepareAccountImage(file)
+      await runTransaction(db, async (transaction) => {
+        const accountSnapshot = await transaction.get(accountReference)
+        if (!accountSnapshot.exists()) throw new Error('ACCOUNT_NOT_FOUND')
+
+        const slotReferences = ACCOUNT_IMAGE_SLOTS.map((slot) => (
+          doc(accountReference, 'images', slot)
+        ))
+        const slotSnapshots = []
+        for (const slotReference of slotReferences) {
+          slotSnapshots.push(await transaction.get(slotReference))
+        }
+        const occupiedSlots = slotSnapshots
+          .filter((snapshot) => snapshot.exists())
+          .map((snapshot) => snapshot.id)
+        const availableSlot = ACCOUNT_IMAGE_SLOTS.find((slot) => !occupiedSlots.includes(slot))
+        if (!availableSlot) throw new Error('MAX_IMAGES')
+
+        transaction.set(doc(accountReference, 'images', availableSlot), {
+          dataUrl: preparedImage.dataUrl,
+          fileName: String(file.name || `anh-${Date.now()}.webp`).slice(0, 255),
+          contentType: preparedImage.contentType,
+          size: preparedImage.size,
+          createdAt: serverTimestamp(),
+        })
+        transaction.update(accountReference, {
+          imageSlots: [...occupiedSlots, availableSlot],
+          updatedAt: serverTimestamp(),
+        })
+      })
+      message.success('Đã nén và lưu ảnh vào Firestore')
+    } catch (error) {
+      if (error?.message === 'MAX_IMAGES') {
+        message.warning('Tài khoản vừa đạt giới hạn 2 ảnh.')
+      } else {
+        setDataError('Không thể nén hoặc lưu ảnh vào Firestore. Vui lòng thử ảnh khác.')
+      }
+    } finally {
+      setUploadingAccountId('')
+    }
+  }
+
+  async function removeAccountImage(account, image) {
+    const accountReference = doc(db, 'users', user.uid, 'accounts', account.id)
+    setDeletingImageId(image.id)
+    setDataError('')
+    try {
+      await runTransaction(db, async (transaction) => {
+        const snapshot = await transaction.get(accountReference)
+        if (!snapshot.exists()) throw new Error('ACCOUNT_NOT_FOUND')
+
+        transaction.delete(doc(accountReference, 'images', image.id))
+        transaction.update(accountReference, {
+          imageSlots: getAccountImageSlots(snapshot.data().imageSlots)
+            .filter((slot) => slot !== image.id),
+          updatedAt: serverTimestamp(),
+        })
+      })
+      message.success('Đã xóa ảnh')
+    } catch {
+      setDataError('Không thể xóa ảnh. Vui lòng thử lại.')
+    } finally {
+      setDeletingImageId('')
     }
   }
 
@@ -545,7 +760,7 @@ function Dashboard({ user, onLogout }) {
       title: 'Tài khoản',
       dataIndex: 'name',
       key: 'name',
-      width: 190,
+      width: 150,
       sorter: (left, right) => compareVietnameseText(left.name, right.name),
       sortDirections: ['ascend', 'descend'],
       render: (name) => (
@@ -562,7 +777,7 @@ function Dashboard({ user, onLogout }) {
       title: 'Trạng thái',
       dataIndex: 'status',
       key: 'status',
-      width: 240,
+      width: 205,
       sorter: (left, right) => {
         const leftIndex = ACCOUNT_STATUSES.indexOf(getAccountStatuses(left.status)[0])
         const rightIndex = ACCOUNT_STATUSES.indexOf(getAccountStatuses(right.status)[0])
@@ -620,23 +835,6 @@ function Dashboard({ user, onLogout }) {
       },
     },
     {
-      title: <Space size={6}><TruckOutlined /> Mã vận đơn</Space>,
-      dataIndex: 'trackingCode',
-      key: 'trackingCode',
-      width: 140,
-      render: (trackingCode, record) => (
-        <EditableAccountText
-          key={`${record.id}:trackingCode:${trackingCode || ''}`}
-          value={trackingCode}
-          placeholder="Mã vận đơn..."
-          maxLength={100}
-          loading={updatingField === `${record.id}:trackingCode`}
-          collapsedWhenEmpty
-          onSave={(value) => updateAccountTextField(record.id, 'trackingCode', value)}
-        />
-      ),
-    },
-    {
       title: <Space size={6}><FileTextOutlined /> Ghi chú</Space>,
       dataIndex: 'note',
       key: 'note',
@@ -656,12 +854,14 @@ function Dashboard({ user, onLogout }) {
     {
       title: 'Hành động',
       key: 'action',
-      width: 88,
+      width: 150,
       align: 'center',
       render: (_value, record) => {
         const trackingCode = String(record.trackingCode || '').trim()
+        const imageSlots = getAccountImageSlots(record.imageSlots)
+        const reachedImageLimit = imageSlots.length >= MAX_ACCOUNT_IMAGES
         return (
-          <Space size={0}>
+          <Space size={2}>
             {trackingCode && (
               <Tooltip title={`Tra cứu ${trackingCode} trên SPX`}>
                 <Button
@@ -674,16 +874,47 @@ function Dashboard({ user, onLogout }) {
                 />
               </Tooltip>
             )}
+            {imageSlots.length > 0 && (
+              <Tooltip title={`Xem thông tin và ${imageSlots.length} ảnh`}>
+                <Button
+                  type="text"
+                  icon={<EyeOutlined />}
+                  onClick={() => openAccountDetails(record.id)}
+                  aria-label={`Xem ảnh và thông tin của ${record.name}`}
+                />
+              </Tooltip>
+            )}
             <Popconfirm
               title="Xóa tài khoản?"
               description="Bản ghi sẽ bị xóa khỏi Firestore."
               okText="Xóa"
               cancelText="Hủy"
               okButtonProps={{ danger: true }}
-              onConfirm={() => removeAccount(record.id)}
+              onConfirm={() => removeAccount(record)}
             >
               <Button danger type="text" icon={<DeleteOutlined />} loading={deletingId === record.id} aria-label={`Xóa ${record.name}`} />
             </Popconfirm>
+            <Upload
+              accept="image/jpeg,image/png,image/webp"
+              showUploadList={false}
+              beforeUpload={(file) => {
+                void uploadAccountImage(record, file)
+                return false
+              }}
+              disabled={reachedImageLimit || uploadingAccountId === record.id}
+            >
+              <Tooltip title={reachedImageLimit ? 'Đã đủ tối đa 2 ảnh' : `Tải ảnh lên (${imageSlots.length}/2)`}>
+                <span>
+                  <Button
+                    type="text"
+                    icon={<UploadOutlined />}
+                    loading={uploadingAccountId === record.id}
+                    disabled={reachedImageLimit}
+                    aria-label={`Tải ảnh lên cho ${record.name}`}
+                  />
+                </span>
+              </Tooltip>
+            </Upload>
           </Space>
         )
       },
@@ -780,7 +1011,7 @@ function Dashboard({ user, onLogout }) {
             <Input
               className="search-input"
               prefix={<SearchOutlined />}
-              placeholder="Tìm tên, ghi chú, mã vận đơn..."
+              placeholder="Tìm tên hoặc ghi chú..."
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               allowClear
@@ -795,7 +1026,7 @@ function Dashboard({ user, onLogout }) {
             loading={isLoading}
             pagination={false}
             tableLayout="fixed"
-            scroll={{ x: 1030 }}
+            scroll={{ x: 860 }}
             locale={{
               emptyText: (
                 <Empty
@@ -810,7 +1041,87 @@ function Dashboard({ user, onLogout }) {
           ? <CredentialsPage user={user} />
           : activePage === 'products'
             ? <ProductsPage user={user} />
-            : <TelegramCodesPage />}
+            : <TelegramCodesPage user={user} />}
+
+        <Modal
+          className="account-images-modal"
+          title={<Space><PictureOutlined />Thông tin tài khoản và hình ảnh</Space>}
+          open={Boolean(selectedAccount)}
+          width={780}
+          footer={<Button onClick={closeAccountDetails}>Đóng</Button>}
+          onCancel={closeAccountDetails}
+        >
+          {selectedAccount && (
+            <>
+              <Descriptions
+                className="account-details"
+                bordered
+                size="small"
+                column={{ xs: 1, sm: 2 }}
+                items={[
+                  { key: 'name', label: 'Tài khoản', children: selectedAccount.name, span: 2 },
+                  {
+                    key: 'status',
+                    label: 'Trạng thái',
+                    children: (
+                      <Space size={[4, 4]} wrap>
+                        {getAccountStatuses(selectedAccount.status).map((status) => (
+                          <Tag key={status} color={STATUS_META[status]?.color}>{status}</Tag>
+                        ))}
+                      </Space>
+                    ),
+                    span: 2,
+                  },
+                  { key: 'createdAt', label: 'Ngày tạo', children: formatExactDate(selectedAccount.createdAt) },
+                  { key: 'updatedAt', label: 'Cập nhật', children: formatExactDate(selectedAccount.updatedAt || selectedAccount.createdAt) },
+                  { key: 'trackingCode', label: 'Mã vận đơn', children: selectedAccount.trackingCode || 'Không có' },
+                  { key: 'note', label: 'Ghi chú', children: selectedAccount.note || 'Không có', span: 2 },
+                ]}
+              />
+
+              <div className="account-images-heading">
+                <Text strong>Hình ảnh ({accountImages.length}/2)</Text>
+                <Text type="secondary">Ảnh được nén và lưu riêng trong Firestore</Text>
+              </div>
+              {areImagesLoading ? (
+                <div className="account-images-loading"><Spin /><Text type="secondary">Đang tải ảnh...</Text></div>
+              ) : accountImages.length > 0 ? (
+                <div className="account-images-grid">
+                  {accountImages.map((image) => (
+                    <div className="account-image-card" key={image.id}>
+                      <Image src={image.dataUrl} alt={image.fileName} />
+                      <div className="account-image-meta">
+                        <Tooltip title={image.fileName}>
+                          <Text ellipsis>{image.fileName}</Text>
+                        </Tooltip>
+                        <Popconfirm
+                          title="Xóa ảnh này?"
+                          description="Ảnh Base64 sẽ bị xóa khỏi Firestore."
+                          okText="Xóa"
+                          cancelText="Hủy"
+                          okButtonProps={{ danger: true }}
+                          onConfirm={() => removeAccountImage(selectedAccount, image)}
+                        >
+                          <Button
+                            danger
+                            type="text"
+                            size="small"
+                            icon={<DeleteOutlined />}
+                            loading={deletingImageId === image.id}
+                          >
+                            Xóa ảnh
+                          </Button>
+                        </Popconfirm>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="Tài khoản chưa có ảnh" />
+              )}
+            </>
+          )}
+        </Modal>
       </Content>
 
       <Footer className="app-footer"><CloudSyncOutlined /> Account Vault · Đồng bộ bằng Firebase Firestore</Footer>

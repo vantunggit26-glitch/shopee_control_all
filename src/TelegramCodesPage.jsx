@@ -6,6 +6,7 @@ import {
   Card,
   Empty,
   Input,
+  Segmented,
   Select,
   Space,
   Statistic,
@@ -21,15 +22,27 @@ import {
 } from '@ant-design/icons'
 import {
   collection,
+  doc,
   limit,
   onSnapshot,
   orderBy,
   query,
+  serverTimestamp,
+  setDoc,
 } from 'firebase/firestore'
 import { db } from './firebase'
 
 const { Title, Text, Paragraph, Link } = Typography
 const filterKeyword = 'Người mới'
+const DEFAULT_PLATFORM = 'shopee'
+const PLATFORM_META = {
+  shopee: { label: 'Shopee', color: 'orange' },
+  lazada: { label: 'Lazada', color: 'blue' },
+}
+const PLATFORM_OPTIONS = Object.entries(PLATFORM_META).map(([value, platform]) => ({
+  label: platform.label,
+  value,
+}))
 
 function normalizeForSearch(value) {
   return String(value || '').normalize('NFKC').toLocaleLowerCase('vi')
@@ -84,6 +97,24 @@ function extractCodesFromLinks(links) {
   return [...new Set(codes)]
 }
 
+function detectMessagePlatforms(text, links, resolvedLinks) {
+  const searchableText = normalizeForSearch([
+    text,
+    ...links,
+    ...resolvedLinks,
+  ].join(' '))
+  const platforms = []
+
+  if (searchableText.includes('shopee') || searchableText.includes('shp.ee')) {
+    platforms.push('shopee')
+  }
+  if (searchableText.includes('lazada') || searchableText.includes('lzd.co')) {
+    platforms.push('lazada')
+  }
+
+  return platforms
+}
+
 function renderLinkedMessage(text, links, resolvedLinks) {
   return String(text || '').split(/(https?:\/\/[^\s<>"']+)/giu).map((part, index) => {
     if (!/^https?:\/\//iu.test(part)) return part
@@ -116,6 +147,7 @@ function normalizeMessage(documentSnapshot) {
   const containsNewUserKeyword = typeof data.containsNewUserKeyword === 'boolean'
     ? data.containsNewUserKeyword
     : normalizeForSearch(text).includes(normalizeForSearch(filterKeyword))
+  const platforms = detectMessagePlatforms(text, links, resolvedLinks)
 
   return {
     id: documentSnapshot.id,
@@ -124,19 +156,45 @@ function normalizeMessage(documentSnapshot) {
     links,
     resolvedLinks,
     detectedCodes,
+    platforms,
     containsNewUserKeyword,
     messageDay: data.messageDay || (data.messageDate?.toDate ? getDayKey(data.messageDate.toDate()) : ''),
   }
 }
 
-export default function TelegramCodesPage() {
+export default function TelegramCodesPage({ user = null }) {
   const { message } = AntApp.useApp()
   const [telegramMessages, setTelegramMessages] = useState([])
+  const [platformFilter, setPlatformFilter] = useState(DEFAULT_PLATFORM)
   const [viewFilter, setViewFilter] = useState('today-new-user')
   const [search, setSearch] = useState('')
   const [error, setError] = useState('')
+  const [preferenceError, setPreferenceError] = useState('')
   const [isLoading, setIsLoading] = useState(true)
+  const [isPreferenceLoading, setIsPreferenceLoading] = useState(Boolean(user?.uid))
+  const [isPreferenceSaving, setIsPreferenceSaving] = useState(false)
   const today = getDayKey(new Date())
+
+  useEffect(() => {
+    if (!user?.uid) return undefined
+
+    const preferenceRef = doc(db, 'users', user.uid, 'preferences', 'discountCodes')
+    const unsubscribe = onSnapshot(
+      preferenceRef,
+      (snapshot) => {
+        const savedPlatform = snapshot.exists() ? snapshot.data().voucherPlatform : ''
+        if (savedPlatform in PLATFORM_META) setPlatformFilter(savedPlatform)
+        setPreferenceError('')
+        setIsPreferenceLoading(false)
+      },
+      () => {
+        setPreferenceError('Không thể tải lựa chọn sàn đã lưu cho tài khoản này.')
+        setIsPreferenceLoading(false)
+      },
+    )
+
+    return unsubscribe
+  }, [user?.uid])
 
   useEffect(() => {
     const messagesQuery = query(
@@ -160,14 +218,19 @@ export default function TelegramCodesPage() {
     return unsubscribe
   }, [])
 
+  const platformMessages = useMemo(
+    () => telegramMessages.filter((item) => item.platforms.includes(platformFilter)),
+    [telegramMessages, platformFilter],
+  )
+
   const newUserMessagesToday = useMemo(
-    () => telegramMessages.filter((item) => item.containsNewUserKeyword && item.messageDay === today),
-    [telegramMessages, today],
+    () => platformMessages.filter((item) => item.containsNewUserKeyword && item.messageDay === today),
+    [platformMessages, today],
   )
 
   const filteredMessages = useMemo(() => {
     const searchText = normalizeForSearch(search.trim())
-    return telegramMessages.filter((item) => {
+    return platformMessages.filter((item) => {
       const matchesView = viewFilter === 'all'
         || (viewFilter === 'today' && item.messageDay === today)
         || (viewFilter === 'new-user' && item.containsNewUserKeyword)
@@ -180,7 +243,30 @@ export default function TelegramCodesPage() {
       ].join(' '))
       return matchesView && (!searchText || searchableText.includes(searchText))
     })
-  }, [telegramMessages, today, viewFilter, search])
+  }, [platformMessages, today, viewFilter, search])
+
+  async function changePlatform(value) {
+    if (!(value in PLATFORM_META) || value === platformFilter) return
+
+    const previousPlatform = platformFilter
+    setPlatformFilter(value)
+    setPreferenceError('')
+    if (!user?.uid) return
+
+    setIsPreferenceSaving(true)
+    try {
+      await setDoc(doc(db, 'users', user.uid, 'preferences', 'discountCodes'), {
+        voucherPlatform: value,
+        updatedAt: serverTimestamp(),
+      })
+      message.success(`Đã lưu lựa chọn ${PLATFORM_META[value].label} cho tài khoản`)
+    } catch {
+      setPlatformFilter(previousPlatform)
+      setPreferenceError('Không thể lưu lựa chọn sàn cho tài khoản. Vui lòng thử lại.')
+    } finally {
+      setIsPreferenceSaving(false)
+    }
+  }
 
   async function copyValue(value, successMessage) {
     try {
@@ -199,6 +285,9 @@ export default function TelegramCodesPage() {
       render: (text, record) => (
         <div className="telegram-message-cell">
           <Space size={6} wrap>
+            {record.platforms.map((platform) => (
+              <Tag key={platform} color={PLATFORM_META[platform].color}>{PLATFORM_META[platform].label}</Tag>
+            ))}
             {record.containsNewUserKeyword && <Tag color="green">Người mới</Tag>}
             <Text type="secondary">#{record.telegramMessageId}</Text>
             {record.sourceLink && (
@@ -242,14 +331,14 @@ export default function TelegramCodesPage() {
       <section className="welcome-section telegram-welcome">
         <div>
           <Text className="section-kicker">KHO MÃ TỰ ĐỘNG</Text>
-          <Title level={2}>Mã giảm giá</Title>
+          <Title level={2}>Mã giảm giá {PLATFORM_META[platformFilter].label}</Title>
           <Paragraph type="secondary">
-            Ai cũng có thể xem. Tin được đồng bộ mỗi giờ và tự xóa sau 5 ngày.
+            Ai cũng có thể xem. Tin được tự phân loại theo sàn, đồng bộ mỗi giờ và xóa sau 5 ngày.
           </Paragraph>
         </div>
         <Space size={12} wrap>
           <Card className="stat-card telegram-stat-card" variant="borderless">
-            <Statistic title="Ưu đãi trong 5 ngày" value={telegramMessages.length} prefix={<MessageOutlined />} />
+            <Statistic title={`${PLATFORM_META[platformFilter].label} trong 5 ngày`} value={platformMessages.length} prefix={<MessageOutlined />} />
           </Card>
           <Card className="stat-card telegram-stat-card" variant="borderless">
             <Statistic title="Người mới hôm nay" value={newUserMessagesToday.length} prefix={<CalendarOutlined />} />
@@ -265,10 +354,20 @@ export default function TelegramCodesPage() {
         description="Các đường dẫn trong nội dung có thể bấm để mở trực tiếp ưu đãi."
       />
 
+      {preferenceError && <Alert className="telegram-error-alert" type="warning" message={preferenceError} showIcon closable onClose={() => setPreferenceError('')} />}
+
       {error && <Alert className="data-alert telegram-error-alert" type="error" message={error} showIcon closable onClose={() => setError('')} />}
 
-      <Card className="panel-card table-card" title={<Space><MessageOutlined className="panel-title-icon list" /><span>Danh sách mã giảm giá</span></Space>} extra={(
+      <Card className="panel-card table-card" title={<Space><MessageOutlined className="panel-title-icon list" /><span>Danh sách mã giảm giá {PLATFORM_META[platformFilter].label}</span></Space>} extra={(
         <Space wrap>
+          <Segmented
+            className="telegram-platform-filter"
+            value={platformFilter}
+            options={PLATFORM_OPTIONS}
+            disabled={isPreferenceLoading || isPreferenceSaving}
+            onChange={changePlatform}
+            aria-label="Chọn sàn thương mại điện tử"
+          />
           <Select
             className="telegram-filter-select"
             value={viewFilter}
