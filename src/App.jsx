@@ -818,7 +818,9 @@ function Dashboard({ user, onLogout }) {
         <Space size={8}>
           <Avatar size={30} className="account-avatar" icon={<UserOutlined />} />
           <div className="account-cell">
-            <Text strong>{name}</Text>
+            <Tooltip title={name} placement="top">
+              <Text strong>{name}</Text>
+            </Tooltip>
             <Text type="secondary"><CloudSyncOutlined /> Đã đồng bộ</Text>
           </div>
         </Space>
