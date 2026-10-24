@@ -89,11 +89,21 @@ const STATUS_META = {
 const ACCOUNT_STATUSES = Object.keys(STATUS_META)
 const MAX_VISIBLE_STATUSES = 2
 const MAX_ACCOUNT_IMAGES = 2
-const MAX_SOURCE_IMAGE_SIZE = 5 * 1024 * 1024
+const MAX_SOURCE_IMAGE_SIZE = 12 * 1024 * 1024
+const MAX_STORED_IMAGE_SIZE = 510000
 const MAX_ENCODED_IMAGE_LENGTH = 680000
 const MAX_IMAGE_DIMENSION = 1800
 const ACCOUNT_IMAGE_SLOTS = ['slot1', 'slot2']
 const ACCOUNT_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp']
+const ACCOUNT_IMAGE_SOURCE_TYPES = [...ACCOUNT_IMAGE_TYPES, 'image/heic', 'image/heif']
+const ACCOUNT_IMAGE_EXTENSION_TYPES = {
+  heic: 'image/heic',
+  heif: 'image/heif',
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+}
 const STATUS_OPTIONS = ACCOUNT_STATUSES.map((status) => ({
   value: status,
   label: (
@@ -241,6 +251,15 @@ function readBlobAsDataUrl(blob) {
   })
 }
 
+function getAccountImageContentType(file) {
+  const reportedType = String(file?.type || '').toLocaleLowerCase('en').split(';')[0]
+  const normalizedType = reportedType === 'image/jpg' ? 'image/jpeg' : reportedType
+  if (ACCOUNT_IMAGE_SOURCE_TYPES.includes(normalizedType)) return normalizedType
+
+  const extension = String(file?.name || '').split('.').pop()?.toLocaleLowerCase('en') || ''
+  return ACCOUNT_IMAGE_EXTENSION_TYPES[extension] || ''
+}
+
 function canvasToBlob(canvas, contentType, quality) {
   return new Promise((resolve, reject) => {
     canvas.toBlob(
@@ -251,29 +270,86 @@ function canvasToBlob(canvas, contentType, quality) {
   })
 }
 
-async function prepareAccountImage(file) {
-  const originalDataUrl = await readBlobAsDataUrl(file)
-  if (originalDataUrl.length <= MAX_ENCODED_IMAGE_LENGTH) {
-    return { dataUrl: originalDataUrl, contentType: file.type, size: file.size }
+function loadImageElement(blob) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(blob)
+    const image = new window.Image()
+
+    image.onload = () => resolve({
+      source: image,
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+      release: () => URL.revokeObjectURL(objectUrl),
+    })
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl)
+      reject(new Error('DECODE_IMAGE_FAILED'))
+    }
+    image.src = objectUrl
+  })
+}
+
+async function encodeCanvasImage(canvas, quality) {
+  try {
+    const webpBlob = await canvasToBlob(canvas, 'image/webp', quality)
+    if (webpBlob.type === 'image/webp') return webpBlob
+  } catch {
+    // Older Safari versions may not encode WebP; JPEG is the compatible fallback.
   }
 
-  const bitmap = await createImageBitmap(file)
+  try {
+    const jpegBlob = await canvasToBlob(canvas, 'image/jpeg', quality)
+    if (jpegBlob.type === 'image/jpeg') return jpegBlob
+    if (ACCOUNT_IMAGE_TYPES.includes(jpegBlob.type)) return jpegBlob
+  } catch {
+    // Converted to the stable error code below for a useful message on iOS.
+  }
+
+  throw new Error('COMPRESS_IMAGE_FAILED')
+}
+
+async function prepareAccountImage(file, sourceContentType) {
+  const normalizedBlob = file.type === sourceContentType
+    ? file
+    : file.slice(0, file.size, sourceContentType)
+  const originalDataUrl = await readBlobAsDataUrl(normalizedBlob)
+  if (
+    ACCOUNT_IMAGE_TYPES.includes(sourceContentType)
+    && file.size <= MAX_STORED_IMAGE_SIZE
+    && originalDataUrl.length <= MAX_ENCODED_IMAGE_LENGTH
+    && originalDataUrl.startsWith(`data:${sourceContentType};base64,`)
+  ) {
+    return { dataUrl: originalDataUrl, contentType: sourceContentType, size: file.size }
+  }
+
+  const decodedImage = await loadImageElement(normalizedBlob)
   const canvas = document.createElement('canvas')
   const context = canvas.getContext('2d')
-  let scale = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(bitmap.width, bitmap.height))
+  if (!context || !decodedImage.width || !decodedImage.height) {
+    decodedImage.release()
+    throw new Error('DECODE_IMAGE_FAILED')
+  }
+
+  let scale = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(decodedImage.width, decodedImage.height))
   let quality = 0.86
 
   try {
     for (let attempt = 0; attempt < 12; attempt += 1) {
-      canvas.width = Math.max(1, Math.round(bitmap.width * scale))
-      canvas.height = Math.max(1, Math.round(bitmap.height * scale))
-      context.clearRect(0, 0, canvas.width, canvas.height)
-      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+      canvas.width = Math.max(1, Math.round(decodedImage.width * scale))
+      canvas.height = Math.max(1, Math.round(decodedImage.height * scale))
+      context.fillStyle = '#ffffff'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+      context.drawImage(decodedImage.source, 0, 0, canvas.width, canvas.height)
 
-      const blob = await canvasToBlob(canvas, 'image/webp', quality)
+      const blob = await encodeCanvasImage(canvas, quality)
       const dataUrl = await readBlobAsDataUrl(blob)
-      if (dataUrl.length <= MAX_ENCODED_IMAGE_LENGTH) {
-        return { dataUrl, contentType: 'image/webp', size: blob.size }
+      if (
+        ACCOUNT_IMAGE_TYPES.includes(blob.type)
+        && blob.size <= MAX_STORED_IMAGE_SIZE
+        && dataUrl.length <= MAX_ENCODED_IMAGE_LENGTH
+        && dataUrl.startsWith(`data:${blob.type};base64,`)
+      ) {
+        return { dataUrl, contentType: blob.type, size: blob.size }
       }
 
       if (quality > 0.5) quality -= 0.1
@@ -283,7 +359,7 @@ async function prepareAccountImage(file) {
       }
     }
   } finally {
-    bitmap.close()
+    decodedImage.release()
   }
 
   throw new Error('IMAGE_TOO_LARGE_AFTER_COMPRESSION')
@@ -649,12 +725,13 @@ function Dashboard({ user, onLogout }) {
   }
 
   async function uploadAccountImage(account, file) {
-    if (!ACCOUNT_IMAGE_TYPES.includes(file?.type)) {
-      message.error('Chỉ hỗ trợ ảnh JPG, PNG hoặc WEBP.')
+    const sourceContentType = getAccountImageContentType(file)
+    if (!sourceContentType) {
+      message.error('Chỉ hỗ trợ ảnh JPG, PNG, WEBP, HEIC hoặc HEIF.')
       return
     }
     if (!file.size || file.size > MAX_SOURCE_IMAGE_SIZE) {
-      message.error('Ảnh gốc phải nhỏ hơn hoặc bằng 5 MB.')
+      message.error('Ảnh gốc phải nhỏ hơn hoặc bằng 12 MB.')
       return
     }
     if (getAccountImageSlots(account.imageSlots).length >= MAX_ACCOUNT_IMAGES) {
@@ -667,7 +744,7 @@ function Dashboard({ user, onLogout }) {
     setUploadingAccountId(account.id)
     setDataError('')
     try {
-      const preparedImage = await prepareAccountImage(file)
+      const preparedImage = await prepareAccountImage(file, sourceContentType)
       await runTransaction(db, async (transaction) => {
         const accountSnapshot = await transaction.get(accountReference)
         if (!accountSnapshot.exists()) throw new Error('ACCOUNT_NOT_FOUND')
@@ -701,8 +778,18 @@ function Dashboard({ user, onLogout }) {
     } catch (error) {
       if (error?.message === 'MAX_IMAGES') {
         message.warning('Tài khoản vừa đạt giới hạn 2 ảnh.')
+      } else if (error?.message === 'DECODE_IMAGE_FAILED') {
+        setDataError('Safari không đọc được ảnh này. Hãy thử lưu ảnh vào Tệp hoặc chuyển sang JPG/PNG rồi tải lại.')
+      } else if (error?.message === 'IMAGE_TOO_LARGE_AFTER_COMPRESSION') {
+        setDataError('Không thể nén ảnh xuống dung lượng lưu trữ. Hãy cắt ảnh nhỏ hơn rồi thử lại.')
+      } else if (error?.message === 'COMPRESS_IMAGE_FAILED') {
+        setDataError('Trình duyệt không thể nén ảnh. Hãy thử cập nhật iOS hoặc chuyển ảnh sang JPG/PNG.')
+      } else if (error?.message === 'READ_IMAGE_FAILED') {
+        setDataError('Không thể đọc dữ liệu ảnh từ thiết bị. Hãy lưu ảnh vào Tệp rồi chọn lại.')
+      } else if (String(error?.code || '').includes('permission-denied')) {
+        setDataError('Không có quyền lưu ảnh vào Firestore. Vui lòng đăng nhập lại rồi thử lại.')
       } else {
-        setDataError('Không thể nén hoặc lưu ảnh vào Firestore. Vui lòng thử ảnh khác.')
+        setDataError('Không thể lưu ảnh vào Firestore. Vui lòng kiểm tra kết nối rồi thử lại.')
       }
     } finally {
       setUploadingAccountId('')
@@ -818,7 +905,7 @@ function Dashboard({ user, onLogout }) {
         <Space size={8}>
           <Avatar size={30} className="account-avatar" icon={<UserOutlined />} />
           <div className="account-cell">
-            <Tooltip title={name} placement="top">
+            <Tooltip title={name} placement="top" mouseEnterDelay={0.15}>
               <Text strong>{name}</Text>
             </Tooltip>
             <Text type="secondary"><CloudSyncOutlined /> Đã đồng bộ</Text>
@@ -954,7 +1041,7 @@ function Dashboard({ user, onLogout }) {
               <Button danger type="text" icon={<DeleteOutlined />} loading={deletingId === record.id} aria-label={`Xóa ${record.name}`} />
             </Popconfirm>
             <Upload
-              accept="image/jpeg,image/png,image/webp"
+              accept="image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif"
               showUploadList={false}
               beforeUpload={(file) => {
                 void uploadAccountImage(record, file)

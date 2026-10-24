@@ -103,6 +103,29 @@ function getProductPlatform(product) {
   return isProductUrl(product.productLink, 'lazada') ? 'lazada' : 'shopee'
 }
 
+function normalizeProductApiUrl(productUrl, platform) {
+  if (platform !== 'lazada') return productUrl
+
+  try {
+    const url = new URL(productUrl)
+    const hostname = url.hostname.toLocaleLowerCase('en')
+    const isShortLink = hostname === 's.lazada.vn'
+      || hostname === 'c.lazada.vn'
+      || hostname === 'lzd.co'
+      || hostname.endsWith('.lzd.co')
+
+    if (!isShortLink) return productUrl
+
+    // Tracking parameters such as `t=p-i3...` can be mistaken for the product
+    // ID by third-party resolvers. The short-link path is sufficient to resolve.
+    url.search = ''
+    url.hash = ''
+    return url.toString()
+  } catch {
+    return productUrl
+  }
+}
+
 function textValue(value, maxLength) {
   return String(value ?? '').trim().slice(0, maxLength)
 }
@@ -193,8 +216,9 @@ function ProductNoteCell({ value, canManage, loading, onSave }) {
 async function fetchProduct(productUrl, platform, apiKey) {
   const apiUrl = PRODUCT_PLATFORMS[platform]?.apiUrl
   if (!apiUrl) throw new Error('Sàn thương mại điện tử không hợp lệ.')
+  const normalizedProductUrl = normalizeProductApiUrl(productUrl, platform)
 
-  const response = await fetch(`${apiUrl}?url=${encodeURIComponent(productUrl)}`, {
+  const response = await fetch(`${apiUrl}?url=${encodeURIComponent(normalizedProductUrl)}`, {
     method: 'GET',
     headers: {
       Accept: 'application/json',
@@ -210,7 +234,14 @@ async function fetchProduct(productUrl, platform, apiKey) {
   }
 
   if (!response.ok || payload.status !== 'success' || !payload.productInfo) {
-    const apiMessage = payload.message || payload.error || payload.apiKeyNotice?.message
+    const notFoundMessage = Array.isArray(payload.notFoundIds) && payload.notFoundIds.length > 0
+      ? `API không tìm thấy sản phẩm với mã ${payload.notFoundIds.join(', ')}.`
+      : ''
+    const apiMessage = payload.message
+      || payload.error
+      || payload.apiKeyNotice?.message
+      || notFoundMessage
+      || payload.warning
     throw new Error(apiMessage || `API sản phẩm phản hồi lỗi ${response.status}.`)
   }
 
