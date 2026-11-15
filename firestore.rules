@@ -51,11 +51,16 @@ rules_version = '2';
 //   - createdAt: timestamp (required, immutable, server-managed)
 //
 // Collection: products/{platform_shopId_itemId}
-// Document ID: Lazada uses lazada_shopId_itemId; legacy/Shopee uses shopId_itemId
+// Document ID: Lazada uses lazada_shopId_itemId or lazada_itemId for a partial
+// import; the latter ID stays stable when full product data becomes available.
+// Legacy/Shopee uses shopId_itemId.
 // Fields:
 //   - platform: string (optional for legacy documents, shopee or lazada)
 //   - itemId: integer (required, 1-999999999999)
-//   - shopId: integer (required, 1-999999999999)
+//   - shopId: integer (required, 1-999999999999), or null for partial Lazada data
+//   - skuId: integer or null (optional, 1-999999999999 when present)
+//   - partial: boolean (optional; true only for incomplete Lazada imports)
+//   - sourceWarning: string (optional, 0-500 characters)
 //   - productName: string (required, 1-500 characters)
 //   - shopName: string (required, 1-200 characters)
 //   - productLink: string (required, 1-2048 characters, matching marketplace HTTPS URL)
@@ -298,6 +303,18 @@ service cloud.firestore {
       return 'platform' in data && data.platform == 'lazada';
     }
 
+    function isPartialLazadaProduct(data) {
+      return isLazadaProduct(data) && 'partial' in data && data.partial == true;
+    }
+
+    function isValidProductId(productId, data) {
+      return (isShopeeProduct(data) && productId.matches('^[0-9]+_[0-9]+$'))
+        || (isLazadaProduct(data)
+          && (productId == 'lazada_' + string(data.itemId)
+            || (data.shopId != null
+              && productId == 'lazada_' + string(data.shopId) + '_' + string(data.itemId))));
+    }
+
     function isValidProductNumber(value, minValue, maxValue) {
       return value == null
         || (value is number && value >= minValue && value <= maxValue);
@@ -337,6 +354,9 @@ service cloud.firestore {
           'platform',
           'itemId',
           'shopId',
+          'skuId',
+          'partial',
+          'sourceWarning',
           'productName',
           'shopName',
           'productLink',
@@ -359,9 +379,13 @@ service cloud.firestore {
         && data.itemId is int
         && data.itemId >= 1
         && data.itemId <= 999999999999
-        && data.shopId is int
-        && data.shopId >= 1
-        && data.shopId <= 999999999999
+        && ((data.shopId is int && data.shopId >= 1 && data.shopId <= 999999999999)
+          || (data.shopId == null && isPartialLazadaProduct(data)))
+        && (!('skuId' in data) || data.skuId == null
+          || (data.skuId is int && data.skuId >= 1 && data.skuId <= 999999999999))
+        && (!('partial' in data)
+          || (data.partial is bool && (!data.partial || isLazadaProduct(data))))
+        && isValidOptionalString(data, 'sourceWarning', 500)
         && data.productName is string
         && data.productName.size() >= 1
         && data.productName.size() <= 500
@@ -482,22 +506,20 @@ service cloud.firestore {
 
       allow create: if isAdmin()
         && isValidProduct(request.resource.data)
-        && ((isShopeeProduct(request.resource.data)
-            && productId.matches('^[0-9]+_[0-9]+$'))
-          || (isLazadaProduct(request.resource.data)
-            && productId.matches('^lazada_[0-9]+_[0-9]+$')))
+        && isValidProductId(productId, request.resource.data)
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time;
 
       allow update: if isAdmin()
         && isValidProduct(request.resource.data)
-        && ((isShopeeProduct(request.resource.data)
-            && productId.matches('^[0-9]+_[0-9]+$'))
-          || (isLazadaProduct(request.resource.data)
-            && productId.matches('^lazada_[0-9]+_[0-9]+$')))
+        && isValidProductId(productId, request.resource.data)
         && isShopeeProduct(request.resource.data) == isShopeeProduct(resource.data)
         && request.resource.data.itemId == resource.data.itemId
-        && request.resource.data.shopId == resource.data.shopId
+        && (request.resource.data.shopId == resource.data.shopId
+          || (isPartialLazadaProduct(resource.data)
+            && resource.data.shopId == null
+            && request.resource.data.shopId is int
+            && !isPartialLazadaProduct(request.resource.data)))
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.updatedAt == request.time;
 

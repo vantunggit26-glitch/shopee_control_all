@@ -13,6 +13,7 @@ dist-ssr
 *.local
 .env.telegram.local
 .telegram/
+backups/
 
 # Editor directories and files
 .vscode/*

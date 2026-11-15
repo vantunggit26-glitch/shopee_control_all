@@ -1,5 +1,10 @@
 # React + Vite
 
+## Sao lưu dữ liệu Firebase về máy
+
+Chạy `npm run db:backup` để lưu toàn bộ Firestore và ảnh Base64 vào `backups/`.
+File được nén, có checksum, và không được đưa lên Git. Xem [hướng dẫn kiểm tra và khôi phục](docs/firestore-backup.md).
+
 ## Kho sản phẩm Shopee và Lazada
 
 Quản trị viên có thể chọn sàn, dán link sản phẩm Shopee/Lazada rồi lưu vào
