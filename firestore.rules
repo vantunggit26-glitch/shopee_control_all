@@ -37,6 +37,13 @@ rules_version = '2';
 //   - createdAt: timestamp (required, immutable)
 //   - updatedAt: timestamp (required, server-managed)
 //
+// Collection: users/{userId}/notes/{noteId}
+// Document ID: Firestore-generated ID; ownership is scoped to userId.
+// Fields:
+//   - text: string (required, 1-5000 characters; must contain non-whitespace)
+//   - createdAt: timestamp (required, immutable, server-managed)
+//   - updatedAt: timestamp (required, server-managed)
+//
 // Collection: users/{userId}/preferences/discountCodes
 // Document ID: fixed value discountCodes
 // Fields:
@@ -280,6 +287,17 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    function isValidNote(data) {
+      return hasRequiredFields(data, ['text', 'createdAt', 'updatedAt'])
+        && hasOnlyAllowedFields(data, ['text', 'createdAt', 'updatedAt'])
+        && data.text is string
+        && data.text.size() >= 1
+        && data.text.size() <= 5000
+        && data.text.matches('(?s).*[^\\s].*')
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
     function isValidDiscountCode(data) {
       return hasRequiredFields(data, ['code', 'type', 'createdAt'])
         && hasOnlyAllowedFields(data, ['code', 'type', 'createdAt'])
@@ -466,6 +484,24 @@ service cloud.firestore {
       allow delete: if isOwner(userId);
 
       // Credential edits are not supported; replace the record instead.
+    }
+
+    match /users/{userId}/notes/{noteId} {
+      allow read: if isOwner(userId);
+
+      allow create: if isOwner(userId)
+        && uidUnchanged()
+        && isValidNote(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isOwner(userId)
+        && uidNotModified()
+        && isValidNote(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedAt == request.time;
+
+      allow delete: if isOwner(userId);
     }
 
     match /users/{userId}/preferences/{preferenceId} {

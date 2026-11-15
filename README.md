@@ -1,5 +1,13 @@
 # React + Vite
 
+## Ghi chú cá nhân
+
+Sau khi đăng nhập, chọn **Ghi chú** trên menu để thêm nội dung hoặc URL.
+Bảng có hai cột: ô nội dung có thể sửa trực tiếp (tự lưu khi rời ô) và hành động
+sao chép, mở URL trong tab mới, xóa. Chỉ hiện nút mở URL cho ghi chú là một
+đường dẫn HTTP/HTTPS hoặc bắt đầu bằng `www.`. Ghi chú tối đa 5000 ký tự,
+lưu riêng tại `users/{uid}/notes` và đồng bộ giữa các thiết bị cùng tài khoản.
+
 ## Sao lưu dữ liệu Firebase về máy
 
 Chạy `npm run db:backup` để lưu toàn bộ Firestore và ảnh Base64 vào `backups/`.

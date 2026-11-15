@@ -714,6 +714,31 @@
   margin-bottom: 20px;
 }
 
+.notes-error-alert {
+  margin-bottom: 20px;
+}
+
+.notes-table-hint.ant-typography {
+  margin: 14px 20px;
+  font-size: 12px;
+}
+
+.note-editor {
+  min-width: 0;
+}
+
+.note-editor textarea {
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.note-editor > .ant-typography {
+  display: block;
+  margin-top: 5px;
+  font-size: 12px;
+}
+
 .credential-form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

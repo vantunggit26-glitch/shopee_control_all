@@ -70,6 +70,7 @@ import './App.css'
 const CredentialsPage = lazy(() => import('./CredentialsPage'))
 const ProductsPage = lazy(() => import('./ProductsPage'))
 const TelegramCodesPage = lazy(() => import('./TelegramCodesPage'))
+const NotesPage = lazy(() => import('./NotesPage'))
 
 const { Header, Content, Footer } = Layout
 const { Title, Text, Paragraph } = Typography
@@ -1171,6 +1172,7 @@ function Dashboard({ user, onLogout }) {
             items={[
               { key: 'accounts', icon: <UnorderedListOutlined />, label: 'Danh sách tài khoản' },
               { key: 'credentials', icon: <GlobalOutlined />, label: 'Đăng nhập website' },
+              { key: 'notes', icon: <FileTextOutlined />, label: 'Ghi chú' },
               { key: 'products', icon: <ShoppingOutlined />, label: 'Sản phẩm' },
               { key: 'telegram', icon: <GiftOutlined />, label: 'Mã giảm giá' },
             ]}
@@ -1240,6 +1242,8 @@ function Dashboard({ user, onLogout }) {
           <Suspense fallback={<div className="page-loading"><Spin size="large" /></div>}>
             {activePage === 'credentials'
               ? <CredentialsPage user={user} />
+              : activePage === 'notes'
+                ? <NotesPage user={user} />
               : activePage === 'products'
                 ? <ProductsPage user={user} />
                 : <TelegramCodesPage user={user} />}
