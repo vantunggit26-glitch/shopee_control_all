@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, memo, startTransition, Suspense, useEffect, useMemo, useState } from 'react'
 import {
   App as AntApp,
   Alert,
@@ -65,10 +65,11 @@ import {
   writeBatch,
 } from 'firebase/firestore'
 import { auth, db, FIREBASE_LOGIN_EMAIL } from './firebase'
-import CredentialsPage from './CredentialsPage'
-import ProductsPage from './ProductsPage'
-import TelegramCodesPage from './TelegramCodesPage'
 import './App.css'
+
+const CredentialsPage = lazy(() => import('./CredentialsPage'))
+const ProductsPage = lazy(() => import('./ProductsPage'))
+const TelegramCodesPage = lazy(() => import('./TelegramCodesPage'))
 
 const { Header, Content, Footer } = Layout
 const { Title, Text, Paragraph } = Typography
@@ -437,6 +438,90 @@ function EditableAccountText({
   )
 }
 
+const AccountCreateForm = memo(function AccountCreateForm({ isSaving, onCreate }) {
+  const [accountName, setAccountName] = useState('')
+  const [statuses, setStatuses] = useState([ACCOUNT_STATUSES[0]])
+
+  async function handleSubmit() {
+    const name = accountName.trim()
+    if (!name || isSaving) return
+
+    const saved = await onCreate(name, statuses)
+    if (saved) setAccountName('')
+  }
+
+  return (
+    <Form className="account-form" onFinish={handleSubmit}>
+      <Input
+        size="large"
+        maxLength={300}
+        value={accountName}
+        onChange={(event) => setAccountName(event.target.value)}
+        prefix={<UserOutlined />}
+        placeholder="Ví dụ: Tài khoản Shopee shop A..."
+        aria-label="Thông tin tài khoản mới"
+      />
+      <Select
+        size="large"
+        mode="multiple"
+        value={statuses}
+        options={STATUS_OPTIONS}
+        tagRender={renderStatusTag(statuses)}
+        maxTagCount={MAX_VISIBLE_STATUSES}
+        maxTagPlaceholder={renderOmittedStatuses}
+        popupMatchSelectWidth={320}
+        showSearch={false}
+        onChange={(nextStatuses) => {
+          if (nextStatuses.length > 0) setStatuses(nextStatuses)
+        }}
+        aria-label="Trạng thái tài khoản mới"
+      />
+      <Button size="large" type="primary" htmlType="submit" icon={<PlusOutlined />} loading={isSaving} disabled={!accountName.trim()}>
+        Lưu tài khoản
+      </Button>
+    </Form>
+  )
+})
+
+const AccountTableToolbar = memo(function AccountTableToolbar({
+  statusFilter,
+  onStatusFilterChange,
+  onSearchChange,
+}) {
+  const [searchDraft, setSearchDraft] = useState('')
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      startTransition(() => onSearchChange(searchDraft))
+    }, searchDraft ? 180 : 0)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [onSearchChange, searchDraft])
+
+  return (
+    <Space wrap>
+      <Select
+        className="status-filter-select"
+        value={statusFilter}
+        onChange={onStatusFilterChange}
+        options={[
+          { value: 'all', label: <Space size={8}><FilterOutlined /><span>Tất cả trạng thái</span></Space> },
+          ...STATUS_OPTIONS,
+        ]}
+        aria-label="Lọc theo trạng thái"
+      />
+      <Input
+        className="search-input"
+        prefix={<SearchOutlined />}
+        placeholder="Tìm tên hoặc ghi chú..."
+        value={searchDraft}
+        onChange={(event) => setSearchDraft(event.target.value)}
+        allowClear
+      />
+    </Space>
+  )
+})
+
 function Login({ onLogin, onViewPublicContent }) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState('')
@@ -522,8 +607,6 @@ function Login({ onLogin, onViewPublicContent }) {
 function Dashboard({ user, onLogout }) {
   const { message, modal } = AntApp.useApp()
   const [accounts, setAccounts] = useState([])
-  const [newAccount, setNewAccount] = useState('')
-  const [newStatus, setNewStatus] = useState([ACCOUNT_STATUSES[0]])
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [accountSort, setAccountSort] = useState({ field: '', order: null })
@@ -651,7 +734,7 @@ function Dashboard({ user, onLogout }) {
   }
 
   async function saveAccount(name, status) {
-    if (!isValidAccountStatuses(status)) return
+    if (!isValidAccountStatuses(status)) return false
 
     setIsSaving(true)
     setDataError('')
@@ -666,17 +749,17 @@ function Dashboard({ user, onLogout }) {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       })
-      setNewAccount('')
       message.success('Đã lưu và đồng bộ tài khoản mới')
+      return true
     } catch {
       setDataError('Không thể lưu bản ghi. Vui lòng thử lại.')
+      return false
     } finally {
       setIsSaving(false)
     }
   }
 
-  function addAccount() {
-    const name = newAccount.trim()
+  function addAccount(name, statuses) {
     if (!name || isSaving) return
 
     const normalizedName = name.replace(/\s+/g, ' ').toLocaleLowerCase('vi')
@@ -686,23 +769,28 @@ function Dashboard({ user, onLogout }) {
       .toLocaleLowerCase('vi') === normalizedName)
 
     if (duplicateAccount) {
-      modal.confirm({
-        title: 'Tài khoản này đã tồn tại',
-        content: (
-          <div>
-            Đã có bản ghi <Text strong>{duplicateAccount.name}</Text> trong danh sách.
-            Bạn vẫn muốn lưu thêm một bản ghi giống vậy không?
-          </div>
-        ),
-        okText: 'Vẫn lưu',
-        cancelText: 'Hủy',
-        centered: true,
-        onOk: () => saveAccount(name, newStatus),
+      return new Promise((resolve) => {
+        modal.confirm({
+          title: 'Tài khoản này đã tồn tại',
+          content: (
+            <div>
+              Đã có bản ghi <Text strong>{duplicateAccount.name}</Text> trong danh sách.
+              Bạn vẫn muốn lưu thêm một bản ghi giống vậy không?
+            </div>
+          ),
+          okText: 'Vẫn lưu',
+          cancelText: 'Hủy',
+          centered: true,
+          onOk: async () => {
+            const saved = await saveAccount(name, statuses)
+            resolve(saved)
+          },
+          onCancel: () => resolve(false),
+        })
       })
-      return
     }
 
-    return saveAccount(name, newStatus)
+    return saveAccount(name, statuses)
   }
 
   async function removeAccount(account) {
@@ -1110,59 +1198,16 @@ function Dashboard({ user, onLogout }) {
 
         <Card className="panel-card" title={<Space><PlusOutlined className="panel-title-icon add" /><span>Thêm tài khoản mới</span></Space>}>
           <Paragraph type="secondary" className="panel-description">Nhập thông tin và chọn trạng thái trước khi lưu vào Firestore.</Paragraph>
-          <Form className="account-form" onFinish={addAccount}>
-            <Input
-              size="large"
-              maxLength={300}
-              value={newAccount}
-              onChange={(event) => setNewAccount(event.target.value)}
-              prefix={<UserOutlined />}
-              placeholder="Ví dụ: Tài khoản Shopee shop A..."
-              aria-label="Thông tin tài khoản mới"
-            />
-            <Select
-              size="large"
-              mode="multiple"
-              value={newStatus}
-              options={STATUS_OPTIONS}
-              tagRender={renderStatusTag(newStatus)}
-              maxTagCount={MAX_VISIBLE_STATUSES}
-              maxTagPlaceholder={renderOmittedStatuses}
-              popupMatchSelectWidth={320}
-              showSearch={false}
-              onChange={(statuses) => {
-                if (statuses.length > 0) setNewStatus(statuses)
-              }}
-              aria-label="Trạng thái tài khoản mới"
-            />
-            <Button size="large" type="primary" htmlType="submit" icon={<PlusOutlined />} loading={isSaving} disabled={!newAccount.trim()}>
-              Lưu tài khoản
-            </Button>
-          </Form>
+          <AccountCreateForm isSaving={isSaving} onCreate={addAccount} />
           {dataError && <Alert className="data-alert" message={dataError} type="error" showIcon closable onClose={() => setDataError('')} />}
         </Card>
 
         <Card className="panel-card table-card" title={<Space><KeyOutlined className="panel-title-icon list" /><span>Danh sách của bạn</span></Space>} extra={(
-          <Space wrap>
-            <Select
-              className="status-filter-select"
-              value={statusFilter}
-              onChange={setStatusFilter}
-              options={[
-                { value: 'all', label: <Space size={8}><FilterOutlined /><span>Tất cả trạng thái</span></Space> },
-                ...STATUS_OPTIONS,
-              ]}
-              aria-label="Lọc theo trạng thái"
-            />
-            <Input
-              className="search-input"
-              prefix={<SearchOutlined />}
-              placeholder="Tìm tên hoặc ghi chú..."
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              allowClear
-            />
-          </Space>
+          <AccountTableToolbar
+            statusFilter={statusFilter}
+            onStatusFilterChange={setStatusFilter}
+            onSearchChange={setSearch}
+          />
         )}>
           <Table
             className="accounts-table"
@@ -1170,7 +1215,13 @@ function Dashboard({ user, onLogout }) {
             columns={columns}
             dataSource={displayedAccounts}
             loading={isLoading}
-            pagination={false}
+            pagination={{
+              defaultPageSize: 20,
+              pageSizeOptions: [20, 50, 100],
+              showSizeChanger: displayedAccounts.length > 20,
+              showTotal: (total) => `${total} tài khoản`,
+              hideOnSinglePage: displayedAccounts.length <= 20,
+            }}
             tableLayout="fixed"
             scroll={{ x: 890 }}
             rowClassName={(record) => (record.isPinned ? 'pinned-account-row' : '')}
@@ -1185,11 +1236,15 @@ function Dashboard({ user, onLogout }) {
             }}
           />
         </Card>
-        </> : activePage === 'credentials'
-          ? <CredentialsPage user={user} />
-          : activePage === 'products'
-            ? <ProductsPage user={user} />
-            : <TelegramCodesPage user={user} />}
+        </> : (
+          <Suspense fallback={<div className="page-loading"><Spin size="large" /></div>}>
+            {activePage === 'credentials'
+              ? <CredentialsPage user={user} />
+              : activePage === 'products'
+                ? <ProductsPage user={user} />
+                : <TelegramCodesPage user={user} />}
+          </Suspense>
+        )}
 
         <Modal
           className="account-images-modal"

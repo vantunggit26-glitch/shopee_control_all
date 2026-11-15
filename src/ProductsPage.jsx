@@ -145,15 +145,56 @@ function normalizeRate(value, platform) {
   return platform === 'lazada' && rate <= 1 ? rate * 100 : rate
 }
 
+function getLazadaFallbackProductName(originLink, itemId) {
+  try {
+    const url = new URL(originLink)
+    const encodedSlug = url.pathname.match(/\/products\/([^/]+?)-i\d+(?:-s\d+)?\.html$/i)?.[1]
+    const slug = encodedSlug ? decodeURIComponent(encodedSlug) : ''
+    const productName = slug.replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim()
+
+    if (productName.length >= 3) {
+      return productName.charAt(0).toLocaleUpperCase('vi') + productName.slice(1)
+    }
+  } catch {
+    // The resolver can still provide a valid item ID without a parseable slug.
+  }
+
+  return `Sản phẩm Lazada #${itemId}`
+}
+
+function getLazadaPartialProduct(payload) {
+  const resolvedLink = payload?.resolvedLink
+  const itemId = numericValue(resolvedLink?.itemId, { integer: true, min: 1 })
+  const skuId = numericValue(resolvedLink?.skuId, { integer: true, min: 1 })
+  const originLink = textValue(resolvedLink?.originLink, 2048)
+
+  if (!itemId || !isProductUrl(originLink, 'lazada')) return null
+
+  return {
+    itemId,
+    skuId,
+    shopId: null,
+    productName: getLazadaFallbackProductName(originLink, itemId),
+    shopName: 'Chưa có dữ liệu cửa hàng',
+    productLink: originLink,
+    originLink,
+    partial: true,
+    warning: textValue(payload.warning, 500) || 'API chưa trả về đầy đủ thông tin sản phẩm Lazada.',
+  }
+}
+
 function normalizeProduct(productInfo, submittedUrl, platform) {
   const itemId = numericValue(productInfo.itemId, { integer: true, min: 1 })
   const shopId = numericValue(productInfo.shopId, { integer: true, min: 1 })
+  const skuId = numericValue(productInfo.skuId, { integer: true, min: 1 })
   const returnedLink = textValue(productInfo.productLink || productInfo.originLink, 2048)
   const productLink = isProductUrl(returnedLink, platform) ? returnedLink : submittedUrl
   const imageUrl = textValue(productInfo.imageUrl, 2048)
   const price = numericValue(productInfo.price)
 
-  if (!itemId || !shopId || !textValue(productInfo.productName, 500) || !isProductUrl(productLink, platform)) {
+  const partial = platform === 'lazada' && Boolean(productInfo.partial)
+
+  if (!itemId || (!shopId && !partial) || !textValue(productInfo.productName, 500) || !isProductUrl(productLink, platform)) {
     throw new Error(`API không trả về đủ thông tin sản phẩm ${PRODUCT_PLATFORMS[platform].label} hợp lệ.`)
   }
 
@@ -161,6 +202,7 @@ function normalizeProduct(productInfo, submittedUrl, platform) {
     platform,
     itemId,
     shopId,
+    skuId,
     productName: textValue(productInfo.productName, 500),
     shopName: textValue(productInfo.shopName, 200) || 'Không rõ cửa hàng',
     productLink,
@@ -180,6 +222,8 @@ function normalizeProduct(productInfo, submittedUrl, platform) {
     ),
     isXtra: Boolean(productInfo.isXtra || productInfo.bonusOfferFlag),
     sourceUpdatedAt: textValue(productInfo.lastUpdate, 50),
+    partial,
+    sourceWarning: partial ? textValue(productInfo.warning, 500) : '',
   }
 }
 
@@ -231,6 +275,13 @@ async function fetchProduct(productUrl, platform, apiKey) {
     payload = await response.json()
   } catch {
     throw new Error('API sản phẩm trả về dữ liệu không hợp lệ.')
+  }
+
+  if (response.ok && payload.status === 'success' && !payload.productInfo && platform === 'lazada') {
+    const partialProduct = getLazadaPartialProduct(payload)
+    if (partialProduct) {
+      return { ...payload, productInfo: partialProduct, partial: true }
+    }
   }
 
   if (!response.ok || payload.status !== 'success' || !payload.productInfo) {
@@ -338,9 +389,15 @@ export default function ProductsPage({ user = null }) {
     try {
       const payload = await fetchProduct(productUrl, platform, productApiKey)
       const product = normalizeProduct(payload.productInfo, productUrl, platform)
-      const productId = platform === 'shopee'
+      const matchingProduct = products.find((existingProduct) => (
+        getProductPlatform(existingProduct) === platform
+        && Number(existingProduct.itemId) === Number(product.itemId)
+      ))
+      const productId = matchingProduct?.id || (platform === 'shopee'
         ? `${product.shopId}_${product.itemId}`
-        : `${platform}_${product.shopId}_${product.itemId}`
+        : product.shopId
+          ? `${platform}_${product.shopId}_${product.itemId}`
+          : `${platform}_${product.itemId}`)
       const productRef = doc(db, 'products', productId)
       const existingProduct = await getDoc(productRef)
 
@@ -349,7 +406,11 @@ export default function ProductsPage({ user = null }) {
           ...product,
           updatedAt: serverTimestamp(),
         })
-        message.success('Đã làm mới thông tin sản phẩm')
+        if (product.partial) {
+          message.warning('Đã lưu thông tin cơ bản; API chưa trả về giá và cửa hàng.')
+        } else {
+          message.success('Đã làm mới thông tin sản phẩm')
+        }
       } else {
         await setDoc(productRef, {
           ...product,
@@ -357,7 +418,11 @@ export default function ProductsPage({ user = null }) {
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         })
-        message.success('Đã thêm sản phẩm')
+        if (product.partial) {
+          message.warning('Đã thêm sản phẩm với thông tin cơ bản; API chưa trả về giá và cửa hàng.')
+        } else {
+          message.success('Đã thêm sản phẩm')
+        }
       }
 
       form.resetFields(['productUrl'])
@@ -433,6 +498,7 @@ export default function ProductsPage({ user = null }) {
                 {PRODUCT_PLATFORMS[getProductPlatform(record)].label}
               </Tag>
               <Tag>#{record.itemId}</Tag>
+              {record.partial && <Tag color="gold">Thiếu dữ liệu</Tag>}
               {record.isXtra && (
                 <Tag color="orange">{getProductPlatform(record) === 'lazada' ? 'Bonus' : 'Xtra'}</Tag>
               )}
