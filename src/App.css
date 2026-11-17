@@ -1135,6 +1135,18 @@
   box-shadow: none;
 }
 
+.public-feature-card.vouchers .public-feature-icon,
+.public-feature-card.products .public-feature-icon {
+  color: #4f5865;
+  background: #f0f1f3;
+}
+
+.public-feature-card:hover .public-feature-arrow,
+.public-feature-card:focus-visible .public-feature-arrow {
+  color: #4f5865;
+  transform: none;
+}
+
 .login-card .ant-card-body {
   padding: 32px;
 }
@@ -1392,6 +1404,10 @@
   gap: 12px;
   background: #fafafa;
   border-bottom: 1px solid #e8eaed;
+}
+
+.telegram-toolbar.is-guest {
+  grid-template-columns: minmax(160px, .7fr) minmax(190px, .9fr) minmax(260px, 1.4fr);
 }
 
 .telegram-filter-field {

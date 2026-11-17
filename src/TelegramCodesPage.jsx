@@ -450,7 +450,7 @@ export default function TelegramCodesPage({ user = null }) {
           </div>
           <Text type="secondary">{filteredMessages.length} kết quả</Text>
         </div>
-        <div className="telegram-toolbar">
+        <div className={`telegram-toolbar ${user?.uid ? '' : 'is-guest'}`}>
           {user?.uid && (
             <label className="telegram-filter-field">
               <span>Kênh</span>
