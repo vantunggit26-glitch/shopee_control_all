@@ -1,5 +1,23 @@
 {
-  "targetChat": "@magiamgiavoucher",
-  "filterKeyword": "Người mới",
-  "firestoreCollection": "todo"
+  "filterKeywords": [
+    "Người mới",
+    "cho đơn đầu tiên",
+    "Mã giảm 100K",
+    "80K đơn từ 0Đ",
+    "100K đơn từ 0Đ"
+  ],
+  "sources": [
+    {
+      "key": "voucher-public",
+      "targetChat": "@magiamgiavoucher",
+      "firestoreCollection": "todo",
+      "visibility": "public"
+    },
+    {
+      "key": "sale-zero-authenticated",
+      "targetChat": "@magiamgia_deal0d_shopee",
+      "firestoreCollection": "todoAuthenticated",
+      "visibility": "authenticated"
+    }
+  ]
 }

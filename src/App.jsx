@@ -1409,13 +1409,14 @@ function App() {
       locale={viVN}
       theme={{
         token: {
-          colorPrimary: '#1677ff',
-          colorInfo: '#1677ff',
-          colorSuccess: '#52c41a',
-          borderRadius: 10,
-          borderRadiusLG: 16,
-          colorBgLayout: '#f5f7fb',
-          colorText: '#17233c',
+          colorPrimary: '#28313f',
+          colorInfo: '#2563a6',
+          colorSuccess: '#28735a',
+          borderRadius: 6,
+          borderRadiusLG: 8,
+          colorBgLayout: '#f5f6f7',
+          colorText: '#20242b',
+          colorBorder: '#dfe2e6',
           fontFamily: "'Inter', 'Segoe UI', sans-serif",
         },
         components: {
@@ -1423,7 +1424,7 @@ function App() {
           Card: { headerFontSize: 16 },
           Input: { controlHeightLG: 44 },
           Select: { controlHeightLG: 44 },
-          Table: { headerBg: '#fafbff', headerColor: '#5f6b7d' },
+          Table: { headerBg: '#f5f6f7', headerColor: '#59616d' },
         },
       }}
     >

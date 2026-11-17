@@ -9,15 +9,11 @@ import {
   Segmented,
   Select,
   Space,
-  Statistic,
   Table,
-  Tag,
   Typography,
 } from 'antd'
 import {
-  CalendarOutlined,
   CopyOutlined,
-  MessageOutlined,
   SearchOutlined,
 } from '@ant-design/icons'
 import {
@@ -33,7 +29,15 @@ import {
 import { db } from './firebase'
 
 const { Title, Text, Paragraph, Link } = Typography
-const filterKeyword = 'Người mới'
+const FILTER_KEYWORDS = [
+  'Người mới',
+  'cho đơn đầu tiên',
+  'Mã giảm 100K',
+  '80K đơn từ 0Đ',
+  '100K đơn từ 0Đ',
+]
+const filterKeyword = FILTER_KEYWORDS[0]
+const MESSAGE_QUERY_LIMIT = 1000
 const DEFAULT_PLATFORM = 'shopee'
 const PLATFORM_META = {
   shopee: { label: 'Shopee', color: 'orange' },
@@ -43,9 +47,29 @@ const PLATFORM_OPTIONS = Object.entries(PLATFORM_META).map(([value, platform]) =
   label: platform.label,
   value,
 }))
+const PUBLIC_CHANNEL_KEY = 'voucher-public'
+const AUTHENTICATED_CHANNEL_KEY = 'sale-zero-authenticated'
+const CHANNEL_META = {
+  all: { label: 'Tất cả kênh' },
+  [PUBLIC_CHANNEL_KEY]: { label: 'Săn Voucher Shopee - Lazada', color: 'purple' },
+  [AUTHENTICATED_CHANNEL_KEY]: { label: 'Săn Sale 0 đồng', color: 'magenta' },
+}
+const AUTHENTICATED_CHANNEL_OPTIONS = Object.entries(CHANNEL_META).map(([value, channel]) => ({
+  label: channel.label,
+  value,
+}))
 
 function normalizeForSearch(value) {
-  return String(value || '').normalize('NFKC').toLocaleLowerCase('vi')
+  return String(value || '')
+    .normalize('NFKC')
+    .toLocaleLowerCase('vi')
+    .replace(/\s+/gu, ' ')
+    .trim()
+}
+
+function findMatchedKeyword(text) {
+  const normalizedText = normalizeForSearch(text)
+  return FILTER_KEYWORDS.find((keyword) => normalizedText.includes(normalizeForSearch(keyword))) || ''
 }
 
 function getDayKey(date) {
@@ -135,7 +159,7 @@ function renderLinkedMessage(text, links, resolvedLinks) {
   })
 }
 
-function normalizeMessage(documentSnapshot) {
+function normalizeMessage(documentSnapshot, fallbackChannelKey) {
   const data = documentSnapshot.data()
   const text = String(data.text || '')
   const links = Array.isArray(data.links) ? data.links : extractLinks(text)
@@ -148,6 +172,7 @@ function normalizeMessage(documentSnapshot) {
     ? data.containsNewUserKeyword
     : normalizeForSearch(text).includes(normalizeForSearch(filterKeyword))
   const platforms = detectMessagePlatforms(text, links, resolvedLinks)
+  const matchedKeyword = data.matchedKeyword || findMatchedKeyword(text)
 
   return {
     id: documentSnapshot.id,
@@ -157,20 +182,25 @@ function normalizeMessage(documentSnapshot) {
     resolvedLinks,
     detectedCodes,
     platforms,
+    matchedKeyword,
     containsNewUserKeyword,
+    channelKey: data.channelKey || fallbackChannelKey,
     messageDay: data.messageDay || (data.messageDate?.toDate ? getDayKey(data.messageDate.toDate()) : ''),
   }
 }
 
 export default function TelegramCodesPage({ user = null }) {
   const { message } = AntApp.useApp()
-  const [telegramMessages, setTelegramMessages] = useState([])
+  const [publicMessages, setPublicMessages] = useState([])
+  const [authenticatedMessages, setAuthenticatedMessages] = useState([])
   const [platformFilter, setPlatformFilter] = useState(DEFAULT_PLATFORM)
-  const [viewFilter, setViewFilter] = useState('today-new-user')
+  const [channelFilter, setChannelFilter] = useState(user?.uid ? 'all' : PUBLIC_CHANNEL_KEY)
+  const [viewFilter, setViewFilter] = useState('today')
   const [search, setSearch] = useState('')
   const [error, setError] = useState('')
   const [preferenceError, setPreferenceError] = useState('')
-  const [isLoading, setIsLoading] = useState(true)
+  const [isPublicLoading, setIsPublicLoading] = useState(true)
+  const [isAuthenticatedLoading, setIsAuthenticatedLoading] = useState(Boolean(user?.uid))
   const [isPreferenceLoading, setIsPreferenceLoading] = useState(Boolean(user?.uid))
   const [isPreferenceSaving, setIsPreferenceSaving] = useState(false)
   const today = getDayKey(new Date())
@@ -183,7 +213,9 @@ export default function TelegramCodesPage({ user = null }) {
       preferenceRef,
       (snapshot) => {
         const savedPlatform = snapshot.exists() ? snapshot.data().voucherPlatform : ''
+        const savedChannel = snapshot.exists() ? snapshot.data().voucherChannel : ''
         if (savedPlatform in PLATFORM_META) setPlatformFilter(savedPlatform)
+        if (savedChannel in CHANNEL_META) setChannelFilter(savedChannel)
         setPreferenceError('')
         setIsPreferenceLoading(false)
       },
@@ -200,27 +232,67 @@ export default function TelegramCodesPage({ user = null }) {
     const messagesQuery = query(
       collection(db, 'todo'),
       orderBy('messageDate', 'desc'),
-      limit(500),
+      limit(MESSAGE_QUERY_LIMIT),
     )
     const unsubscribe = onSnapshot(
       messagesQuery,
       (snapshot) => {
-        setTelegramMessages(snapshot.docs.map(normalizeMessage))
+        setPublicMessages(snapshot.docs.map((item) => normalizeMessage(item, PUBLIC_CHANNEL_KEY)))
         setError('')
-        setIsLoading(false)
+        setIsPublicLoading(false)
       },
       () => {
         setError('Không thể tải tin Telegram. Hãy kiểm tra Firestore Rules đã được triển khai.')
-        setIsLoading(false)
+        setIsPublicLoading(false)
       },
     )
 
     return unsubscribe
   }, [])
 
+  useEffect(() => {
+    if (!user?.uid) return undefined
+
+    const messagesQuery = query(
+      collection(db, 'todoAuthenticated'),
+      orderBy('messageDate', 'desc'),
+      limit(MESSAGE_QUERY_LIMIT),
+    )
+    return onSnapshot(
+      messagesQuery,
+      (snapshot) => {
+        setAuthenticatedMessages(snapshot.docs.map((item) => (
+          normalizeMessage(item, AUTHENTICATED_CHANNEL_KEY)
+        )))
+        setError('')
+        setIsAuthenticatedLoading(false)
+      },
+      () => {
+        setError('Không thể tải kênh dành cho tài khoản đăng nhập. Hãy kiểm tra Firestore Rules.')
+        setIsAuthenticatedLoading(false)
+      },
+    )
+  }, [user?.uid])
+
+  const telegramMessages = useMemo(
+    () => [...publicMessages, ...authenticatedMessages].sort((left, right) => {
+      const leftTime = left.messageDate?.toMillis?.() || 0
+      const rightTime = right.messageDate?.toMillis?.() || 0
+      return rightTime - leftTime
+    }),
+    [authenticatedMessages, publicMessages],
+  )
+
+  const channelMessages = useMemo(
+    () => telegramMessages.filter((item) => (
+      channelFilter === 'all' || item.channelKey === channelFilter
+    )),
+    [channelFilter, telegramMessages],
+  )
+
   const platformMessages = useMemo(
-    () => telegramMessages.filter((item) => item.platforms.includes(platformFilter)),
-    [telegramMessages, platformFilter],
+    () => channelMessages.filter((item) => item.platforms.includes(platformFilter)),
+    [channelMessages, platformFilter],
   )
 
   const newUserMessagesToday = useMemo(
@@ -240,6 +312,7 @@ export default function TelegramCodesPage({ user = null }) {
         ...(item.detectedCodes || []),
         ...(item.links || []),
         ...(item.resolvedLinks || []),
+        item.chatTitle,
       ].join(' '))
       return matchesView && (!searchText || searchableText.includes(searchText))
     })
@@ -257,12 +330,35 @@ export default function TelegramCodesPage({ user = null }) {
     try {
       await setDoc(doc(db, 'users', user.uid, 'preferences', 'discountCodes'), {
         voucherPlatform: value,
+        voucherChannel: channelFilter,
         updatedAt: serverTimestamp(),
-      })
+      }, { merge: true })
       message.success(`Đã lưu lựa chọn ${PLATFORM_META[value].label} cho tài khoản`)
     } catch {
       setPlatformFilter(previousPlatform)
       setPreferenceError('Không thể lưu lựa chọn sàn cho tài khoản. Vui lòng thử lại.')
+    } finally {
+      setIsPreferenceSaving(false)
+    }
+  }
+
+  async function changeChannel(value) {
+    if (!user?.uid || !(value in CHANNEL_META) || value === channelFilter) return
+
+    const previousChannel = channelFilter
+    setChannelFilter(value)
+    setPreferenceError('')
+    setIsPreferenceSaving(true)
+    try {
+      await setDoc(doc(db, 'users', user.uid, 'preferences', 'discountCodes'), {
+        voucherPlatform: platformFilter,
+        voucherChannel: value,
+        updatedAt: serverTimestamp(),
+      }, { merge: true })
+      message.success(`Đã chuyển sang ${CHANNEL_META[value].label}`)
+    } catch {
+      setChannelFilter(previousChannel)
+      setPreferenceError('Không thể lưu lựa chọn kênh. Vui lòng thử lại.')
     } finally {
       setIsPreferenceSaving(false)
     }
@@ -284,33 +380,32 @@ export default function TelegramCodesPage({ user = null }) {
       key: 'text',
       render: (text, record) => (
         <div className="telegram-message-cell">
-          <Space size={6} wrap>
-            {record.platforms.map((platform) => (
-              <Tag key={platform} color={PLATFORM_META[platform].color}>{PLATFORM_META[platform].label}</Tag>
-            ))}
-            {record.containsNewUserKeyword && <Tag color="green">Người mới</Tag>}
-            <Text type="secondary">#{record.telegramMessageId}</Text>
+          <div className="telegram-message-meta">
+            <span>{record.platforms.map((platform) => PLATFORM_META[platform].label).join(' · ') || 'Chưa rõ sàn'}</span>
+            {record.matchedKeyword && <span>{record.matchedKeyword}</span>}
+            <span>{CHANNEL_META[record.channelKey]?.label || record.chatTitle || 'Telegram'}</span>
+            <span>#{record.telegramMessageId}</span>
             {record.sourceLink && (
               <Link href={record.sourceLink} target="_blank" rel="noopener noreferrer">
-                <MessageOutlined /> Tin gốc
+                Mở tin gốc
               </Link>
             )}
-          </Space>
-          <Paragraph ellipsis={{ rows: 3, expandable: true, symbol: 'Xem thêm' }}>
+          </div>
+          <Paragraph ellipsis={{ rows: 4, expandable: true, symbol: 'Xem thêm' }}>
             {renderLinkedMessage(text, record.links || [], record.resolvedLinks || record.links || [])}
           </Paragraph>
         </div>
       ),
     },
     {
-      title: 'Mã nhận diện',
+      title: 'Mã',
       dataIndex: 'detectedCodes',
       key: 'detectedCodes',
-      width: 190,
+      width: 175,
       render: (codes = []) => codes.length > 0 ? (
         <Space size={[4, 4]} wrap>
           {codes.map((code) => (
-            <Button key={code} size="small" icon={<CopyOutlined />} onClick={() => copyValue(code, `Đã sao chép ${code}`)}>
+            <Button className="telegram-code-button" key={code} size="small" icon={<CopyOutlined />} onClick={() => copyValue(code, `Đã sao chép ${code}`)}>
               {code}
             </Button>
           ))}
@@ -321,79 +416,97 @@ export default function TelegramCodesPage({ user = null }) {
       title: 'Thời gian',
       dataIndex: 'messageDate',
       key: 'messageDate',
-      width: 155,
-      render: (messageDate) => <Text type="secondary">{formatMessageDate(messageDate)}</Text>,
+      width: 145,
+      render: (messageDate) => <span className="telegram-date">{formatMessageDate(messageDate)}</span>,
     },
   ]
 
   return (
     <>
-      <section className="welcome-section telegram-welcome">
+      <section className="telegram-page-heading">
         <div>
-          <Text className="section-kicker">KHO MÃ TỰ ĐỘNG</Text>
-          <Title level={2}>Mã giảm giá {PLATFORM_META[platformFilter].label}</Title>
+          <Title level={2}>Mã giảm giá</Title>
           <Paragraph type="secondary">
-            Ai cũng có thể xem. Tin được tự phân loại theo sàn, đồng bộ mỗi giờ và xóa sau 5 ngày.
+            {user?.uid
+              ? 'Theo dõi ưu đãi từ các kênh công khai và kênh dành cho tài khoản đăng nhập.'
+              : 'Theo dõi ưu đãi từ kênh công khai. Đăng nhập để xem thêm kênh riêng.'}
           </Paragraph>
         </div>
-        <Space size={12} wrap>
-          <Card className="stat-card telegram-stat-card" variant="borderless">
-            <Statistic title={`${PLATFORM_META[platformFilter].label} trong 5 ngày`} value={platformMessages.length} prefix={<MessageOutlined />} />
-          </Card>
-          <Card className="stat-card telegram-stat-card" variant="borderless">
-            <Statistic title="Người mới hôm nay" value={newUserMessagesToday.length} prefix={<CalendarOutlined />} />
-          </Card>
-        </Space>
+        <div className="telegram-summary" aria-label="Thống kê mã giảm giá">
+          <div><strong>{platformMessages.length}</strong><span>Tin trong 5 ngày</span></div>
+          <div><strong>{newUserMessagesToday.length}</strong><span>Người mới hôm nay</span></div>
+        </div>
       </section>
-
-      <Alert
-        className="telegram-info-alert"
-        type="info"
-        showIcon
-        message={`Hôm nay có ${newUserMessagesToday.length} tin chứa “${filterKeyword}”.`}
-        description="Các đường dẫn trong nội dung có thể bấm để mở trực tiếp ưu đãi."
-      />
 
       {preferenceError && <Alert className="telegram-error-alert" type="warning" message={preferenceError} showIcon closable onClose={() => setPreferenceError('')} />}
 
       {error && <Alert className="data-alert telegram-error-alert" type="error" message={error} showIcon closable onClose={() => setError('')} />}
 
-      <Card className="panel-card table-card" title={<Space><MessageOutlined className="panel-title-icon list" /><span>Danh sách mã giảm giá {PLATFORM_META[platformFilter].label}</span></Space>} extra={(
-        <Space wrap>
-          <Segmented
-            className="telegram-platform-filter"
-            value={platformFilter}
-            options={PLATFORM_OPTIONS}
-            disabled={isPreferenceLoading || isPreferenceSaving}
-            onChange={changePlatform}
-            aria-label="Chọn sàn thương mại điện tử"
-          />
-          <Select
-            className="telegram-filter-select"
-            value={viewFilter}
-            onChange={setViewFilter}
-            options={[
-              { value: 'today-new-user', label: 'Người mới hôm nay' },
-              { value: 'new-user', label: 'Người mới trong 5 ngày' },
-              { value: 'today', label: 'Tất cả hôm nay' },
-              { value: 'all', label: 'Tất cả trong 5 ngày' },
-            ]}
-          />
-          <Input
-            className="telegram-search-input"
-            prefix={<SearchOutlined />}
-            placeholder="Tìm nội dung, mã hoặc link..."
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            allowClear
-          />
-        </Space>
-      )}>
+      <Card className="panel-card telegram-list-card">
+        <div className="telegram-list-heading">
+          <div>
+            <Title level={4}>Danh sách ưu đãi</Title>
+            <Text type="secondary">Dữ liệu được giữ trong 5 ngày và cập nhật tự động.</Text>
+          </div>
+          <Text type="secondary">{filteredMessages.length} kết quả</Text>
+        </div>
+        <div className="telegram-toolbar">
+          {user?.uid && (
+            <label className="telegram-filter-field">
+              <span>Kênh</span>
+              <Select
+                className="telegram-channel-filter"
+                value={channelFilter}
+                options={AUTHENTICATED_CHANNEL_OPTIONS}
+                disabled={isPreferenceLoading || isPreferenceSaving}
+                onChange={changeChannel}
+                aria-label="Chọn kênh Telegram"
+              />
+            </label>
+          )}
+          <label className="telegram-filter-field">
+            <span>Sàn</span>
+            <Segmented
+              className="telegram-platform-filter"
+              value={platformFilter}
+              options={PLATFORM_OPTIONS}
+              disabled={isPreferenceLoading || isPreferenceSaving}
+              onChange={changePlatform}
+              aria-label="Chọn sàn thương mại điện tử"
+            />
+          </label>
+          <label className="telegram-filter-field">
+            <span>Thời gian</span>
+            <Select
+              className="telegram-filter-select"
+              value={viewFilter}
+              onChange={setViewFilter}
+              options={[
+                { value: 'today', label: 'Hôm nay' },
+                { value: 'all', label: '5 ngày gần đây' },
+                { value: 'today-new-user', label: 'Người mới hôm nay' },
+                { value: 'new-user', label: 'Người mới trong 5 ngày' },
+              ]}
+            />
+          </label>
+          <label className="telegram-filter-field telegram-search-field">
+            <span>Tìm kiếm</span>
+            <Input
+              className="telegram-search-input"
+              prefix={<SearchOutlined />}
+              placeholder="Nội dung, mã hoặc link"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              allowClear
+            />
+          </label>
+        </div>
         <Table
+          className="telegram-table"
           rowKey="id"
           columns={columns}
           dataSource={filteredMessages}
-          loading={isLoading}
+          loading={isPublicLoading || isAuthenticatedLoading}
           pagination={{ pageSize: 20, hideOnSinglePage: true }}
           scroll={{ x: 780 }}
           locale={{

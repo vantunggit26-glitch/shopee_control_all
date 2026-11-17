@@ -15,7 +15,14 @@ if (-not (Test-Path -LiteralPath $serviceAccountFile)) { throw "Missing $service
 $powerShellPath = (Get-Command powershell.exe -ErrorAction Stop).Source
 $actionArguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$runnerFile`""
 $action = New-ScheduledTaskAction -Execute $powerShellPath -Argument $actionArguments -WorkingDirectory $projectRoot
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+# Re-check periodically so a listener interrupted by Windows/network tooling is
+# started again. MultipleInstances=IgnoreNew keeps this harmless while it runs.
+$recoveryTrigger = New-ScheduledTaskTrigger `
+  -Once `
+  -At (Get-Date).AddMinutes(1) `
+  -RepetitionInterval (New-TimeSpan -Minutes 5)
+$triggers = @($logonTrigger, $recoveryTrigger)
 $settings = New-ScheduledTaskSettingsSet `
   -AllowStartIfOnBatteries `
   -DontStopIfGoingOnBatteries `
@@ -29,7 +36,7 @@ $principal = New-ScheduledTaskPrincipal -UserId "$env:USERDOMAIN\$env:USERNAME" 
 Register-ScheduledTask `
   -TaskName $taskName `
   -Action $action `
-  -Trigger $trigger `
+  -Trigger $triggers `
   -Settings $settings `
   -Principal $principal `
   -Description 'Listen to Telegram messages and save filtered todos to Firestore.' `

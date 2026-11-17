@@ -48,6 +48,8 @@ rules_version = '2';
 // Document ID: fixed value discountCodes
 // Fields:
 //   - voucherPlatform: string (required, shopee or lazada)
+//   - voucherChannel: string (optional, all, voucher-public, or
+//     sale-zero-authenticated)
 //   - updatedAt: timestamp (required, server-managed)
 //
 // Collection: discountCodes/{discountCodeId}
@@ -92,6 +94,11 @@ rules_version = '2';
 //   - containsNewUserKeyword: boolean
 //   - detectedCodes/links: list
 //   - sourceLink/messageDay/chatTitle: string
+//
+// Collection: todoAuthenticated/{chatId_messageId}
+// Documents have the same Telegram message shape as todo, but originate from
+// a channel that is visible only to authenticated application users. The
+// trusted Admin SDK automation is the only writer.
 //
 // Collection: privateConfig/{configId}
 // Documents contain private integration configuration. Only the fixed
@@ -281,9 +288,16 @@ service cloud.firestore {
 
     function isValidDiscountCodePreference(data) {
       return hasRequiredFields(data, ['voucherPlatform', 'updatedAt'])
-        && hasOnlyAllowedFields(data, ['voucherPlatform', 'updatedAt'])
+        && hasOnlyAllowedFields(data, ['voucherPlatform', 'voucherChannel', 'updatedAt'])
         && data.voucherPlatform is string
         && data.voucherPlatform in ['shopee', 'lazada']
+        && (!('voucherChannel' in data)
+          || (data.voucherChannel is string
+            && data.voucherChannel in [
+              'all',
+              'voucher-public',
+              'sale-zero-authenticated'
+            ]))
         && data.updatedAt is timestamp;
     }
 
@@ -532,6 +546,14 @@ service cloud.firestore {
     match /todo/{todoId} {
       // Public read access is intentional: visitors can view Telegram codes without login.
       allow read: if true;
+
+      // No client writes are allowed. The Admin SDK automation bypasses rules.
+    }
+
+    match /todoAuthenticated/{todoId} {
+      // This collection contains messages from an account-only Telegram
+      // channel. Authentication is required even for direct Firestore reads.
+      allow read: if isAuthenticated();
 
       // No client writes are allowed. The Admin SDK automation bypasses rules.
     }

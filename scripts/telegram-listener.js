@@ -47,20 +47,59 @@ function toMessageDate(value) {
 }
 
 function normalizeForSearch(value) {
-  return String(value || '').normalize('NFKC').toLocaleLowerCase('vi')
+  return String(value || '')
+    .normalize('NFKC')
+    .toLocaleLowerCase('vi')
+    .replace(/\s+/gu, ' ')
+    .trim()
+}
+
+function findMatchedKeyword(text, keywords) {
+  const normalizedText = normalizeForSearch(text)
+  return keywords.find((keyword) => normalizedText.includes(normalizeForSearch(keyword))) || ''
 }
 
 async function readConfiguration() {
   const configuration = JSON.parse(await readFile(configurationFile, 'utf8'))
-  const targetChat = process.env.TELEGRAM_TARGET_CHAT?.trim() || String(configuration.targetChat || '').trim()
-  const filterKeyword = process.env.TELEGRAM_FILTER_KEYWORD?.trim() || String(configuration.filterKeyword || '').trim()
-  const firestoreCollection = String(configuration.firestoreCollection || '').trim()
+  const environmentKeywords = process.env.TELEGRAM_FILTER_KEYWORDS
+    ?.split('|')
+    .map((keyword) => keyword.trim())
+    .filter(Boolean)
+  const legacyEnvironmentKeyword = process.env.TELEGRAM_FILTER_KEYWORD?.trim()
+  const filterKeywords = environmentKeywords?.length
+    ? environmentKeywords
+    : legacyEnvironmentKeyword
+      ? [legacyEnvironmentKeyword]
+      : (Array.isArray(configuration.filterKeywords)
+          ? configuration.filterKeywords
+          : [configuration.filterKeyword])
+        .map((keyword) => String(keyword || '').trim())
+        .filter(Boolean)
+  if (filterKeywords.length === 0) {
+    throw new Error('Thiếu filterKeywords trong telegram-listener.config.json.')
+  }
+  const configuredSources = Array.isArray(configuration.sources)
+    ? configuration.sources
+    : [{
+      key: 'voucher-public',
+      targetChat: process.env.TELEGRAM_TARGET_CHAT?.trim() || configuration.targetChat,
+      firestoreCollection: configuration.firestoreCollection,
+      visibility: 'public',
+    }]
+  const sources = configuredSources.map((source) => ({
+    key: String(source.key || '').trim(),
+    targetChat: String(source.targetChat || '').trim(),
+    firestoreCollection: String(source.firestoreCollection || '').trim(),
+    visibility: source.visibility === 'authenticated' ? 'authenticated' : 'public',
+  }))
 
-  if (!targetChat) throw new Error('Thiếu targetChat trong telegram-listener.config.json.')
-  if (!filterKeyword) throw new Error('Thiếu filterKeyword trong telegram-listener.config.json.')
-  if (!firestoreCollection) throw new Error('Thiếu firestoreCollection trong telegram-listener.config.json.')
+  if (sources.length === 0 || sources.some((source) => (
+    !source.key || !source.targetChat || !source.firestoreCollection
+  ))) {
+    throw new Error('Cấu hình sources trong telegram-listener.config.json không hợp lệ.')
+  }
 
-  return { targetChat, filterKeyword, firestoreCollection }
+  return { filterKeywords: [...new Set(filterKeywords)], sources }
 }
 
 function normalizeTelegramTarget(value) {
@@ -146,50 +185,67 @@ async function main() {
   const me = await client.getMe()
   console.log(`Đã đăng nhập: ${getSenderName(me)}`)
 
-  const todoRepository = await createTodoRepository(configuration.firestoreCollection)
-  const targetGroup = await chooseTargetGroup(client, configuration.targetChat)
-  console.log(`Đang nghe tin nhắn mới từ: ${targetGroup.label}`)
-  console.log(`Lọc tin có chứa: "${configuration.filterKeyword}"`)
-  console.log(`Lưu vào Firestore collection: ${configuration.firestoreCollection}`)
+  const activeSources = []
+  for (const source of configuration.sources) {
+    const todoRepository = await createTodoRepository(source.firestoreCollection)
+    const targetGroup = await chooseTargetGroup(client, source.targetChat)
+    activeSources.push({ ...source, todoRepository, targetGroup })
+  }
+
+  console.log(`Đang nghe ${activeSources.length} kênh Telegram:`)
+  activeSources.forEach((source) => {
+    console.log(`- ${source.targetGroup.label} -> ${source.firestoreCollection} (${source.visibility})`)
+  })
+  console.log(`Chỉ lưu tin có chứa một trong ${configuration.filterKeywords.length} từ khóa:`)
+  configuration.filterKeywords.forEach((keyword) => console.log(`- ${keyword}`))
   console.log('Giữ cửa sổ này chạy. Nhấn Ctrl+C để dừng.\n')
 
   client.updates.catch((error) => {
     console.error(`Lỗi nhận cập nhật: ${error.message}`)
   })
 
-  client.updates.watch(targetGroup.watchTarget, async (update) => {
-    const message = update.message
-    const text = message.message?.trim() || ''
-    if (!normalizeForSearch(text).includes(normalizeForSearch(configuration.filterKeyword))) return
+  activeSources.forEach((source) => {
+    client.updates.watch(source.targetGroup.watchTarget, async (update) => {
+      const message = update.message
+      const text = message.message?.trim() || ''
+      if (!text) return
+      const matchedKeyword = findMatchedKeyword(text, configuration.filterKeywords)
+      if (!matchedKeyword) return
+      const containsNewUserKeyword = normalizeForSearch(matchedKeyword)
+        === normalizeForSearch(configuration.filterKeywords[0])
 
-    try {
-      const sender = await message.getSender()
-      const senderName = getSenderName(sender)
-      const chatId = String(message.chatId || targetGroup.watchTarget)
-      const sourceLink = targetGroup.chatUsername
-        ? `https://t.me/${targetGroup.chatUsername}/${message.id}`
-        : ''
-      const result = await todoRepository.createFromTelegram({
-        telegramMessageId: message.id,
-        chatId,
-        chatTitle: targetGroup.chatTitle,
-        chatUsername: targetGroup.chatUsername,
-        senderId: sender?.id?.toString() || '',
-        senderName,
-        text,
-        sourceLink,
-        matchedKeyword: configuration.filterKeyword,
-        messageDate: toMessageDate(message.date),
-      })
+      try {
+        const sender = await message.getSender()
+        const senderName = getSenderName(sender)
+        const chatId = String(message.chatId || source.targetGroup.watchTarget)
+        const sourceLink = source.targetGroup.chatUsername
+          ? `https://t.me/${source.targetGroup.chatUsername}/${message.id}`
+          : ''
+        const result = await source.todoRepository.createFromTelegram({
+          telegramMessageId: message.id,
+          chatId,
+          chatTitle: source.targetGroup.chatTitle,
+          chatUsername: source.targetGroup.chatUsername,
+          channelKey: source.key,
+          visibility: source.visibility,
+          senderId: sender?.id?.toString() || '',
+          senderName,
+          text,
+          sourceLink,
+          matchedKeyword,
+          containsNewUserKeyword,
+          messageDate: toMessageDate(message.date),
+        })
 
-      console.log(`[${formatMessageDate(message.date)}] ${senderName}`)
-      console.log(`${text}\n`)
-      console.log(result.created
-        ? `Đã tạo todo Firestore: ${result.id}\n`
-        : `Todo đã tồn tại: ${result.id}\n`)
-    } catch (error) {
-      console.error(`Không thể lưu todo: ${error.message}`)
-    }
+        console.log(`[${formatMessageDate(message.date)}] ${source.targetGroup.chatTitle} · ${senderName}`)
+        console.log(`${text}\n`)
+        console.log(result.created
+          ? `Đã tạo ${source.firestoreCollection}: ${result.id}\n`
+          : `Tin đã tồn tại: ${result.id}\n`)
+      } catch (error) {
+        console.error(`Không thể lưu tin từ ${source.targetGroup.label}: ${error.message}`)
+      }
+    })
   })
 
   const shutdown = async () => {

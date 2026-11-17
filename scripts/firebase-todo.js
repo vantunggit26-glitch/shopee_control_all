@@ -6,6 +6,7 @@ import { FieldValue, Timestamp, getFirestore } from 'firebase-admin/firestore'
 
 const defaultCredentialsPath = fileURLToPath(new URL('../.telegram/firebase-service-account.json', import.meta.url))
 const expectedProjectId = 'account-vault-tung'
+const retentionMilliseconds = 5 * 24 * 60 * 60 * 1000
 
 function limitedText(value, maxLength) {
   return String(value ?? '').trim().slice(0, maxLength)
@@ -44,6 +45,15 @@ function createDocumentId(chatId, messageId) {
   return `${safeChatId}_${messageId}`
 }
 
+function getMessageDay(date) {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date)
+}
+
 export async function createTodoRepository(collectionName) {
   if (!/^[a-zA-Z0-9_-]{1,100}$/.test(collectionName)) {
     throw new Error('Tên collection Firestore không hợp lệ.')
@@ -59,11 +69,14 @@ export async function createTodoRepository(collectionName) {
       const telegramMessageId = Number(message.telegramMessageId)
       const text = limitedText(message.text, 10000)
       const chatId = limitedText(message.chatId, 100)
+      const messageDate = message.messageDate instanceof Date ? message.messageDate : new Date(message.messageDate)
 
       if (!Number.isInteger(telegramMessageId) || telegramMessageId <= 0) {
         throw new Error('Telegram message ID không hợp lệ.')
       }
-      if (!chatId || !text) throw new Error('Tin nhắn thiếu chatId hoặc nội dung.')
+      if (!chatId || !text || Number.isNaN(messageDate.getTime())) {
+        throw new Error('Tin nhắn thiếu chatId, nội dung hoặc thời gian hợp lệ.')
+      }
 
       const documentReference = todoCollection.doc(createDocumentId(chatId, telegramMessageId))
       try {
@@ -72,6 +85,9 @@ export async function createTodoRepository(collectionName) {
           completed: false,
           source: 'telegram',
           matchedKeyword: limitedText(message.matchedKeyword, 100),
+          containsNewUserKeyword: Boolean(message.containsNewUserKeyword),
+          channelKey: limitedText(message.channelKey, 100),
+          visibility: message.visibility === 'authenticated' ? 'authenticated' : 'public',
           text,
           telegramMessageId,
           chatId,
@@ -80,7 +96,9 @@ export async function createTodoRepository(collectionName) {
           senderId: limitedText(message.senderId, 100),
           senderName: limitedText(message.senderName, 300),
           sourceLink: limitedText(message.sourceLink, 2048),
-          messageDate: Timestamp.fromDate(message.messageDate),
+          messageDay: getMessageDay(messageDate),
+          messageDate: Timestamp.fromDate(messageDate),
+          expiresAt: Timestamp.fromMillis(messageDate.getTime() + retentionMilliseconds),
           createdAt: FieldValue.serverTimestamp(),
         })
         return { created: true, id: documentReference.id }
