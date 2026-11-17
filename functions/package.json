@@ -8,8 +8,10 @@
     "node": "22"
   },
   "scripts": {
-    "check": "node --check index.js && node --check run-once.js",
-    "sync:once": "node run-once.js"
+    "check": "node --check index.js && node --check run-once.js && node --check telegram-errors.js && node --check create-actions-session.js",
+    "test": "node --test telegram-errors.test.js",
+    "sync:once": "node run-once.js",
+    "session:actions": "node --env-file-if-exists=../.env.telegram.local create-actions-session.js"
   },
   "dependencies": {
     "firebase-admin": "^14.5.0",

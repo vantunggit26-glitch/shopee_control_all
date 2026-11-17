@@ -9,7 +9,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: telegram-10-minute-sync
+  # Keep this group stable even when the schedule/name changes. Every workflow
+  # using this Telegram session in this repository must use the same group.
+  group: telegram-session-sync
   cancel-in-progress: false
 
 jobs:
@@ -24,10 +26,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
@@ -35,6 +37,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --prefix functions
+
+      - name: Check sync scripts
+        run: npm --prefix functions run check && npm --prefix functions test
 
       - name: Prepare Firebase credentials
         shell: bash
@@ -53,3 +58,8 @@ jobs:
 
       - name: Synchronize Telegram messages
         run: npm --prefix functions run sync:once
+
+      - name: Remove temporary Firebase credentials
+        if: always()
+        shell: bash
+        run: rm -f -- "$RUNNER_TEMP/firebase-service-account.json"

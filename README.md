@@ -26,12 +26,13 @@ trong `privateConfig/addlivetag`; không ghi API key, cookie hoặc mật khẩu
 nguồn. Dữ liệu Lazada có thể thiếu đánh giá hoặc một số trường khác, khi đó giao
 diện hiển thị “Chưa có dữ liệu” thay vì tự tạo giá trị.
 
-## Đồng bộ Telegram mỗi giờ
+## Đồng bộ Telegram mỗi 10 phút
 
-Workflow `.github/workflows/telegram-hourly-sync.yml` chạy vào phút 17 mỗi giờ,
-đọc mọi tin nhắn mới từ `@magiamgiavoucher`, nhận diện mã/link và ghi vào
-collection Firestore `todo`. Mốc tin nhắn cuối được lưu tại
-`_syncState/telegram_magiamgiavoucher` để tránh đọc và ghi trùng.
+Workflow `.github/workflows/telegram-hourly-sync.yml` đặt lịch vào các phút
+7, 17, 27, 37, 47, 57 mỗi giờ (GitHub có thể chạy trễ). Workflow đọc tin mới
+từ `@magiamgiavoucher` vào `todo`, và `@magiamgia_deal0d_shopee` vào
+`todoAuthenticated`, theo các từ khóa trong `functions/index.js`.
+Mốc tin nhắn cuối của từng kênh lưu trong `_syncState` để tránh ghi trùng.
 Mỗi bản ghi Telegram có `expiresAt` và được tự động xóa sau 5 ngày trong lượt
 đồng bộ kế tiếp.
 
@@ -46,6 +47,11 @@ Repository cần có bốn GitHub Actions secrets:
 - `FIREBASE_SERVICE_ACCOUNT_JSON`
 
 Workflow cũng hỗ trợ chạy thủ công bằng nút **Run workflow** trong tab Actions.
+
+`TELEGRAM_SESSION` phải là session riêng cho workflow, không dùng chung với
+listener local hoặc repository khác. Nếu log báo `AUTH_KEY_DUPLICATED` hoặc
+`Concurrent usage of the current session`, Telegram đã thu hồi session cũ:
+xem [hướng dẫn tạo session riêng và khôi phục Actions](docs/telegram-actions-recovery.md).
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 

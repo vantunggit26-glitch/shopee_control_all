@@ -13,6 +13,7 @@
     "db:restore": "node scripts/firestore-backup.js restore",
     "functions:install": "npm --prefix functions install",
     "telegram:listen": "node --env-file=.env.telegram.local scripts/telegram-listener.js",
+    "telegram:actions-session": "npm --prefix functions run session:actions",
     "telegram:install-background": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-telegram-listener-task.ps1",
     "telegram:start": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start-telegram-listener.ps1",
     "telegram:stop": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/stop-telegram-listener.ps1",
