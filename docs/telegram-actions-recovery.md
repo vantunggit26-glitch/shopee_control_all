@@ -17,6 +17,8 @@ npm run telegram:actions-session
 
 Lệnh dùng `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_PHONE` từ `.env.telegram.local` nếu có. Nếu chưa cấu hình, chương trình hỏi trực tiếp. API ID/Hash lấy từ ứng dụng của bạn tại https://my.telegram.org/apps. Nhập mã đăng nhập nhận được trong Telegram và mật khẩu xác minh hai bước nếu tài khoản yêu cầu; các thông tin này được nhập ẩn trong terminal, không gửi vào chat.
 
+Màn hình lần lượt hỏi `[1/3] API ID` (chỉ dãy số), `[2/3] API Hash` (32 ký tự, nhập ẩn), `[3/3] số điện thoại`. Nhập xong từng ô và nhấn Enter; không dán lệnh `clip`/`Get-Content` vào các ô này. Nếu nhập sai, chương trình sẽ nêu đúng trường cần sửa và hỏi lại trường đó. Với API Hash, khi nhấn Enter sẽ có dòng xác nhận đã nhận 32 ký tự; lúc gõ không hiển thị ký tự là bình thường. Không cần tạo file `.env.telegram.local` nếu nhập trực tiếp.
+
 Lệnh luôn tạo authorization key mới, không đọc `.telegram/session.txt` của listener local, không đọc/ghi Firestore, và ngắt kết nối trước khi tạo file `.telegram/github-actions-session.txt`. Session không được in ra console. Nếu file đã tồn tại, đổi tên file đó trước khi tạo mới; lệnh không tự ghi đè.
 
 Sau khi thành công, sao chép nội dung file trên máy:

@@ -1,9 +1,11 @@
 import { existsSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
 import { createInterface } from 'node:readline/promises'
 import { Writable } from 'node:stream'
 import { TelegramClient } from 'teleproto'
 import { StringSession } from 'teleproto/sessions/index.js'
+import { collectSessionInput } from './session-input.js'
 
 const sessionFile = new URL('../.telegram/github-actions-session.txt', import.meta.url)
 
@@ -15,6 +17,10 @@ async function main() {
     throw new Error('Đã có .telegram/github-actions-session.txt. Hãy đổi tên file đó trước khi tạo session mới; lệnh này không ghi đè session đã có.')
   }
 
+  const envFile = new URL('../.env.telegram.local', import.meta.url)
+  if (existsSync(envFile)) process.loadEnvFile(fileURLToPath(envFile))
+  else console.log('Chưa có file cấu hình. Chương trình sẽ hỏi từng thông tin; nhập xong mỗi ô thì nhấn Enter.')
+
   let muted = false
   const output = new Writable({
     write(chunk, encoding, callback) {
@@ -23,11 +29,15 @@ async function main() {
     },
   })
   const terminal = createInterface({ input: process.stdin, output, terminal: true })
+  const cancellation = new AbortController()
+  terminal.on('SIGINT', () => cancellation.abort())
   async function ask(label, hidden = false) {
-    process.stdout.write(label)
+    // Let readline own the prompt so typing/pasting cannot erase its label.
+    muted = false
+    const answer = terminal.question(label, { signal: cancellation.signal })
     muted = hidden
     try {
-      return (await terminal.question('')).trim()
+      return (await answer).trim()
     } finally {
       muted = false
       if (hidden) process.stdout.write('\n')
@@ -36,10 +46,14 @@ async function main() {
 
   let client
   try {
-    const apiId = Number(process.env.TELEGRAM_API_ID?.trim() || await ask('Telegram API ID: '))
-    const apiHash = process.env.TELEGRAM_API_HASH?.trim() || await ask('Telegram API Hash (ẩn): ', true)
-    const phone = process.env.TELEGRAM_PHONE?.trim() || await ask('Số điện thoại Telegram, dạng +84...: ')
-    if (!Number.isInteger(apiId) || apiId <= 0 || !apiHash || !phone) throw new Error('Thiếu API ID, API Hash hoặc số điện thoại Telegram hợp lệ.')
+    const { apiId, apiHash, phone } = await collectSessionInput({
+      env: process.env,
+      ask,
+      onInvalid: (message) => console.log(message),
+      onValid: (name) => {
+        if (name === 'apiHash') console.log('Đã nhận API Hash đúng định dạng (32 ký tự).')
+      },
+    })
 
     // Always start with a new auth key; never import the local listener session.
     client = new TelegramClient(new StringSession(''), apiId, apiHash, { connectionRetries: 3 })
@@ -67,6 +81,6 @@ async function main() {
 }
 
 main().then(() => process.exit(0)).catch((error) => {
-  console.error(error.message)
+  console.error(error.name === 'AbortError' ? 'Đã hủy tạo session.' : error.message)
   process.exit(1)
 })
