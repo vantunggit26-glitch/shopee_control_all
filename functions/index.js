@@ -53,6 +53,7 @@ const retentionDays = 5
 const retentionMilliseconds = retentionDays * 24 * 60 * 60 * 1000
 const firestoreBatchLimit = 400
 const linkResolutionVersion = 1
+const filterKeywordsVersion = 2
 const linkResolutionCache = new Map()
 const logger = {
   info(message, details = {}) {
@@ -439,6 +440,7 @@ async function synchronizeTelegramSource(client, firestore, source) {
     : 0
   const shouldBackfillAllMessages = !stateSnapshot.get('allMessagesBackfilledAt')
     || Number(stateSnapshot.get('linkResolutionVersion') || 0) < linkResolutionVersion
+    || Number(stateSnapshot.get('filterKeywordsVersion') || 0) < filterKeywordsVersion
   const retentionMigration = await migrateTelegramRetention(
     firestore,
     stateSnapshot,
@@ -525,6 +527,7 @@ async function synchronizeTelegramSource(client, firestore, source) {
   if (shouldBackfillAllMessages) {
     stateUpdate.allMessagesBackfilledAt = FieldValue.serverTimestamp()
     stateUpdate.linkResolutionVersion = linkResolutionVersion
+    stateUpdate.filterKeywordsVersion = filterKeywordsVersion
     stateUpdate.linksResolvedAt = FieldValue.serverTimestamp()
   }
   await stateReference.set(stateUpdate, { merge: true })
