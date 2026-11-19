@@ -13,8 +13,10 @@ import {
   Typography,
 } from 'antd'
 import {
+  DownOutlined,
   CopyOutlined,
   SearchOutlined,
+  UpOutlined,
 } from '@ant-design/icons'
 import {
   collection,
@@ -58,6 +60,8 @@ const AUTHENTICATED_CHANNEL_OPTIONS = Object.entries(CHANNEL_META).map(([value, 
   label: channel.label,
   value,
 }))
+const DEFAULT_SYNC_INTERVAL_MINUTES = 10
+const DEFAULT_SYNC_OFFSET_MINUTE = 7
 
 function normalizeForSearch(value) {
   return String(value || '')
@@ -92,6 +96,70 @@ function formatMessageDate(timestamp) {
     month: '2-digit',
     year: 'numeric',
   }).format(timestamp.toDate())
+}
+
+function toDate(value) {
+  if (value?.toDate) return value.toDate()
+  if (!value) return null
+
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+function formatDateTime(value) {
+  const date = toDate(value)
+  if (!date) return 'Chưa có dữ liệu'
+
+  return new Intl.DateTimeFormat('vi-VN', {
+    timeZone: 'Asia/Ho_Chi_Minh',
+    hour: '2-digit',
+    minute: '2-digit',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(date)
+}
+
+function formatElapsed(value, now) {
+  const date = toDate(value)
+  if (!date) return 'Chưa đồng bộ'
+
+  const elapsedSeconds = Math.max(0, Math.floor((now - date.getTime()) / 1000))
+  if (elapsedSeconds < 60) return 'Vừa xong'
+  const elapsedMinutes = Math.floor(elapsedSeconds / 60)
+  if (elapsedMinutes < 60) return `${elapsedMinutes} phút trước`
+  const elapsedHours = Math.floor(elapsedMinutes / 60)
+  if (elapsedHours < 24) return `${elapsedHours} giờ trước`
+  return `${Math.floor(elapsedHours / 24)} ngày trước`
+}
+
+function formatCountdown(milliseconds) {
+  const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000))
+  if (totalSeconds < 60) return `${totalSeconds} giây`
+  const totalMinutes = Math.ceil(totalSeconds / 60)
+  if (totalMinutes < 60) return `${totalMinutes} phút`
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  return minutes > 0 ? `${hours} giờ ${minutes} phút` : `${hours} giờ`
+}
+
+function getNextScheduledTime(now, intervalMinutes, offsetMinute) {
+  const safeInterval = Number.isInteger(intervalMinutes) && intervalMinutes > 0
+    ? intervalMinutes
+    : DEFAULT_SYNC_INTERVAL_MINUTES
+  const safeOffset = Number.isInteger(offsetMinute)
+    ? ((offsetMinute % safeInterval) + safeInterval) % safeInterval
+    : DEFAULT_SYNC_OFFSET_MINUTE
+  let candidate = new Date(now)
+  candidate.setUTCSeconds(0, 0)
+  candidate = new Date(candidate.getTime() + 60 * 1000)
+
+  for (let index = 0; index <= 60; index += 1) {
+    if (candidate.getUTCMinutes() % safeInterval === safeOffset) return candidate
+    candidate = new Date(candidate.getTime() + 60 * 1000)
+  }
+
+  return new Date(now + safeInterval * 60 * 1000)
 }
 
 function extractLinks(text) {
@@ -199,11 +267,35 @@ export default function TelegramCodesPage({ user = null }) {
   const [search, setSearch] = useState('')
   const [error, setError] = useState('')
   const [preferenceError, setPreferenceError] = useState('')
+  const [syncStatus, setSyncStatus] = useState(null)
+  const [syncStatusError, setSyncStatusError] = useState('')
+  const [showSyncLogs, setShowSyncLogs] = useState(false)
+  const [currentTime, setCurrentTime] = useState(() => Date.now())
   const [isPublicLoading, setIsPublicLoading] = useState(true)
   const [isAuthenticatedLoading, setIsAuthenticatedLoading] = useState(Boolean(user?.uid))
   const [isPreferenceLoading, setIsPreferenceLoading] = useState(Boolean(user?.uid))
   const [isPreferenceSaving, setIsPreferenceSaving] = useState(false)
   const today = getDayKey(new Date())
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(Date.now()), 30_000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    if (!user?.uid) return undefined
+
+    return onSnapshot(
+      doc(db, '_syncState', 'telegram_automation'),
+      (snapshot) => {
+        setSyncStatus(snapshot.exists() ? snapshot.data() : null)
+        setSyncStatusError('')
+      },
+      () => {
+        setSyncStatusError('Không thể đọc trạng thái GitHub Actions từ Firestore.')
+      },
+    )
+  }, [user?.uid])
 
   useEffect(() => {
     if (!user?.uid) return undefined
@@ -317,6 +409,43 @@ export default function TelegramCodesPage({ user = null }) {
       return matchesView && (!searchText || searchableText.includes(searchText))
     })
   }, [platformMessages, today, viewFilter, search])
+
+  const syncView = useMemo(() => {
+    const intervalMinutes = Number(syncStatus?.scheduleMinutes)
+      || DEFAULT_SYNC_INTERVAL_MINUTES
+    const offsetMinute = Number.isInteger(Number(syncStatus?.scheduleOffsetMinute))
+      ? Number(syncStatus.scheduleOffsetMinute)
+      : DEFAULT_SYNC_OFFSET_MINUTE
+    const lastSuccess = toDate(syncStatus?.lastSuccessAt)
+    const lastAttempt = toDate(syncStatus?.lastAttemptAt)
+    const nextSchedule = getNextScheduledTime(currentTime, intervalMinutes, offsetMinute)
+    const staleAfterMs = intervalMinutes * 2.5 * 60 * 1000
+    const referenceDate = syncStatus?.status === 'running' ? lastAttempt : lastSuccess
+    const isStale = Boolean(referenceDate && currentTime - referenceDate.getTime() > staleAfterMs)
+    let state = syncStatus?.status || 'waiting'
+    let label = 'Chờ lần chạy đầu tiên'
+
+    if (state === 'running' && !isStale) label = 'Đang đồng bộ'
+    if (state === 'running' && isStale) {
+      state = 'stale'
+      label = 'Job có thể đang bị treo'
+    }
+    if (state === 'success' && !isStale) label = 'Hoạt động bình thường'
+    if (state === 'success' && isStale) {
+      state = 'stale'
+      label = 'GitHub Actions đang trễ'
+    }
+    if (state === 'failure') label = 'Lần chạy gần nhất bị lỗi'
+
+    return {
+      intervalMinutes,
+      state,
+      label,
+      lastSuccess,
+      nextSchedule,
+      logs: Array.isArray(syncStatus?.logs) ? syncStatus.logs : [],
+    }
+  }, [currentTime, syncStatus])
 
   async function changePlatform(value) {
     if (!(value in PLATFORM_META) || value === platformFilter) return
@@ -437,6 +566,64 @@ export default function TelegramCodesPage({ user = null }) {
           <div><strong>{newUserMessagesToday.length}</strong><span>Người mới hôm nay</span></div>
         </div>
       </section>
+
+      {user?.uid && (
+        <section className={`telegram-sync-status is-${syncView.state}`} aria-label="Trạng thái đồng bộ GitHub Actions">
+          <div className="telegram-sync-status-main">
+            <div className="telegram-sync-state">
+              <span className="telegram-sync-dot" aria-hidden="true" />
+              <div>
+                <Text type="secondary">GitHub Actions</Text>
+                <strong>{syncView.label}</strong>
+              </div>
+            </div>
+            <div className="telegram-sync-metric">
+              <Text type="secondary">Thành công gần nhất</Text>
+              <strong>{formatElapsed(syncView.lastSuccess, currentTime)}</strong>
+              <span>{formatDateTime(syncView.lastSuccess)}</span>
+            </div>
+            <div className="telegram-sync-metric">
+              <Text type="secondary">Lượt lịch kế tiếp</Text>
+              <strong>Sau {formatCountdown(syncView.nextSchedule.getTime() - currentTime)}</strong>
+              <span>Mỗi {syncView.intervalMinutes} phút · GitHub có thể trì hoãn</span>
+            </div>
+            <Button
+              className="telegram-sync-log-toggle"
+              type="text"
+              icon={showSyncLogs ? <UpOutlined /> : <DownOutlined />}
+              onClick={() => setShowSyncLogs((visible) => !visible)}
+            >
+              Nhật ký ({syncView.logs.length})
+            </Button>
+          </div>
+
+          {(syncView.state === 'failure' || syncView.state === 'stale') && (
+            <div className="telegram-sync-notice">
+              {syncView.state === 'failure'
+                ? (syncStatus?.lastError || 'Job đã kết thúc với lỗi nhưng chưa có nội dung chi tiết.')
+                : `Không có lần đồng bộ thành công trong hơn ${Math.ceil(syncView.intervalMinutes * 2.5)} phút.`}
+            </div>
+          )}
+
+          {showSyncLogs && (
+            <div className="telegram-sync-logs">
+              {syncView.logs.length > 0 ? syncView.logs.map((log, index) => (
+                <div className={`telegram-sync-log is-${log.status}`} key={`${log.runId || 'run'}-${log.attempt || 1}-${index}`}>
+                  <span className="telegram-sync-log-time">{formatDateTime(log.completedAt || log.startedAt)}</span>
+                  <span className="telegram-sync-log-message">{log.message || 'Không có nội dung log.'}</span>
+                  {log.runUrl && (
+                    <Link href={log.runUrl} target="_blank" rel="noopener noreferrer">Mở GitHub</Link>
+                  )}
+                </div>
+              )) : (
+                <Text type="secondary">Nhật ký sẽ xuất hiện sau lần chạy workflow tiếp theo.</Text>
+              )}
+            </div>
+          )}
+        </section>
+      )}
+
+      {syncStatusError && <Alert className="telegram-error-alert" type="warning" message={syncStatusError} showIcon />}
 
       {preferenceError && <Alert className="telegram-error-alert" type="warning" message={preferenceError} showIcon closable onClose={() => setPreferenceError('')} />}
 

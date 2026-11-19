@@ -13,6 +13,16 @@ const filterKeywords = [
   '100K đơn từ 0Đ',
 ]
 const stateCollectionName = '_syncState'
+const automationStatusDocumentName = 'telegram_automation'
+const automationLogLimit = 20
+const syncScheduleMinutes = Number.parseInt(
+  process.env.TELEGRAM_SYNC_SCHEDULE_MINUTES || '10',
+  10,
+)
+const syncScheduleOffsetMinute = Number.parseInt(
+  process.env.TELEGRAM_SYNC_SCHEDULE_OFFSET_MINUTE || '7',
+  10,
+)
 const telegramSources = [
   {
     key: 'voucher-public',
@@ -57,6 +67,136 @@ async function withTimeout(promise, timeoutMilliseconds, operationName) {
     return await Promise.race([promise, timeoutPromise])
   } finally {
     clearTimeout(timeout)
+  }
+}
+
+function createRunContext() {
+  const startedAt = new Date()
+  const runId = limitedText(
+    process.env.GITHUB_RUN_ID || `local-${startedAt.getTime()}`,
+    100,
+  )
+  const repository = limitedText(process.env.GITHUB_REPOSITORY, 200)
+  const serverUrl = limitedText(process.env.GITHUB_SERVER_URL, 500)
+
+  return {
+    runId,
+    runAttempt: Number.parseInt(process.env.GITHUB_RUN_ATTEMPT || '1', 10) || 1,
+    eventName: limitedText(process.env.GITHUB_EVENT_NAME || 'manual', 100),
+    commitSha: limitedText(process.env.GITHUB_SHA, 100),
+    startedAt,
+    runUrl: serverUrl && repository && process.env.GITHUB_RUN_ID
+      ? `${serverUrl}/${repository}/actions/runs/${process.env.GITHUB_RUN_ID}`
+      : '',
+  }
+}
+
+function sanitizeSyncError(error) {
+  let message = limitedText(error?.message || error || 'Lỗi không xác định.', 1200)
+  for (const secret of [
+    process.env.TELEGRAM_API_HASH,
+    process.env.TELEGRAM_SESSION,
+  ]) {
+    if (secret?.trim()) message = message.replaceAll(secret.trim(), '[đã ẩn]')
+  }
+  return message
+}
+
+function summarizeSyncResults(results = []) {
+  return results.reduce((summary, result) => ({
+    sourceCount: summary.sourceCount + 1,
+    fetchedCount: summary.fetchedCount + (Number(result.fetchedCount) || 0),
+    matchedCount: summary.matchedCount + (Number(result.matchedCount) || 0),
+    createdCount: summary.createdCount + (Number(result.createdCount) || 0),
+    deletedCount: summary.deletedCount + (Number(result.deletedCount) || 0),
+  }), {
+    sourceCount: 0,
+    fetchedCount: 0,
+    matchedCount: 0,
+    createdCount: 0,
+    deletedCount: 0,
+  })
+}
+
+async function markAutomationStarted(firestore, run) {
+  const statusReference = firestore
+    .collection(stateCollectionName)
+    .doc(automationStatusDocumentName)
+
+  await statusReference.set({
+    status: 'running',
+    workflowName: 'Telegram sync every 10 minutes',
+    scheduleMinutes: syncScheduleMinutes,
+    scheduleOffsetMinute: syncScheduleOffsetMinute,
+    currentRun: {
+      id: run.runId,
+      attempt: run.runAttempt,
+      eventName: run.eventName,
+      commitSha: run.commitSha,
+      runUrl: run.runUrl,
+      startedAt: run.startedAt.toISOString(),
+    },
+    lastAttemptAt: Timestamp.fromDate(run.startedAt),
+    updatedAt: FieldValue.serverTimestamp(),
+  }, { merge: true })
+}
+
+async function markAutomationCompleted(firestore, run, status, results, error = null) {
+  const statusReference = firestore
+    .collection(stateCollectionName)
+    .doc(automationStatusDocumentName)
+  const completedAt = new Date()
+  const durationMs = Math.max(0, completedAt.getTime() - run.startedAt.getTime())
+  const summary = summarizeSyncResults(results)
+  const errorMessage = status === 'failure' ? sanitizeSyncError(error) : ''
+  const message = status === 'success'
+    ? `Đã kiểm tra ${summary.sourceCount} kênh, thêm ${summary.createdCount} tin mới và xóa ${summary.deletedCount} tin hết hạn.`
+    : `Đồng bộ thất bại: ${errorMessage}`
+  const snapshot = await statusReference.get()
+  const previousLogs = snapshot.exists && Array.isArray(snapshot.get('logs'))
+    ? snapshot.get('logs')
+    : []
+  const logEntry = {
+    runId: run.runId,
+    attempt: run.runAttempt,
+    eventName: run.eventName,
+    commitSha: run.commitSha,
+    runUrl: run.runUrl,
+    status,
+    startedAt: run.startedAt.toISOString(),
+    completedAt: completedAt.toISOString(),
+    durationMs,
+    message,
+    error: errorMessage,
+    ...summary,
+  }
+  const update = {
+    status,
+    currentRun: null,
+    lastCompletedAt: Timestamp.fromDate(completedAt),
+    nextExpectedAt: Timestamp.fromMillis(
+      run.startedAt.getTime() + syncScheduleMinutes * 60 * 1000,
+    ),
+    durationMs,
+    lastError: errorMessage,
+    latestSummary: summary,
+    logs: [logEntry, ...previousLogs].slice(0, automationLogLimit),
+    updatedAt: FieldValue.serverTimestamp(),
+  }
+
+  if (status === 'success') update.lastSuccessAt = Timestamp.fromDate(completedAt)
+  if (status === 'failure') update.lastFailureAt = Timestamp.fromDate(completedAt)
+
+  await statusReference.set(update, { merge: true })
+}
+
+async function safelyUpdateAutomationStatus(operationName, operation) {
+  try {
+    await operation()
+  } catch (error) {
+    logger.warn(`Không thể ${operationName} trạng thái đồng bộ.`, {
+      error: sanitizeSyncError(error),
+    })
   }
 }
 
@@ -398,40 +538,60 @@ async function synchronizeTelegramSource(client, firestore, source) {
 }
 
 export async function synchronizeTelegramMessages() {
+  const firestore = getFirestore()
+  const run = createRunContext()
   const apiId = Number.parseInt(process.env.TELEGRAM_API_ID, 10)
   const apiHash = process.env.TELEGRAM_API_HASH?.trim() || ''
   const session = process.env.TELEGRAM_SESSION?.trim() || ''
 
-  if (!Number.isInteger(apiId) || apiId <= 0) {
-    throw new Error('Secret TELEGRAM_API_ID không hợp lệ.')
-  }
-  if (!apiHash || !session) {
-    throw new Error('Thiếu TELEGRAM_API_HASH hoặc TELEGRAM_SESSION.')
-  }
-
-  const client = new TelegramClient(
-    new StringSession(session),
-    apiId,
-    apiHash,
-    { connectionRetries: 5 },
+  await safelyUpdateAutomationStatus(
+    'ghi trạng thái bắt đầu',
+    () => markAutomationStarted(firestore, run),
   )
 
   try {
-    logger.info('Đang kết nối Telegram.', { sourceCount: telegramSources.length })
-    await withTimeout(client.connect(), 60_000, 'Kết nối Telegram')
-    if (!(await withTimeout(client.checkAuthorization(), 30_000, 'Kiểm tra Telegram session'))) {
-      throw new Error('Telegram session đã hết hạn hoặc chưa được đăng nhập.')
+    if (!Number.isInteger(apiId) || apiId <= 0) {
+      throw new Error('Secret TELEGRAM_API_ID không hợp lệ.')
+    }
+    if (!apiHash || !session) {
+      throw new Error('Thiếu TELEGRAM_API_HASH hoặc TELEGRAM_SESSION.')
     }
 
-    const firestore = getFirestore()
+    const client = new TelegramClient(
+      new StringSession(session),
+      apiId,
+      apiHash,
+      { connectionRetries: 5 },
+    )
     const results = []
-    for (const source of telegramSources) {
-      results.push(await synchronizeTelegramSource(client, firestore, source))
+
+    try {
+      logger.info('Đang kết nối Telegram.', { sourceCount: telegramSources.length })
+      await withTimeout(client.connect(), 60_000, 'Kết nối Telegram')
+      if (!(await withTimeout(client.checkAuthorization(), 30_000, 'Kiểm tra Telegram session'))) {
+        throw new Error('Telegram session đã hết hạn hoặc chưa được đăng nhập.')
+      }
+
+      for (const source of telegramSources) {
+        results.push(await synchronizeTelegramSource(client, firestore, source))
+      }
+      logger.info('Đồng bộ tất cả kênh Telegram hoàn tất.', { results })
+    } finally {
+      await withTimeout(client.disconnect(), 10_000, 'Ngắt kết nối Telegram').catch((error) => {
+        logger.warn('Không thể ngắt kết nối Telegram.', { error: error.message })
+      })
     }
-    logger.info('Đồng bộ tất cả kênh Telegram hoàn tất.', { results })
-  } finally {
-    await withTimeout(client.disconnect(), 10_000, 'Ngắt kết nối Telegram').catch((error) => {
-      logger.warn('Không thể ngắt kết nối Telegram.', { error: error.message })
-    })
+
+    await safelyUpdateAutomationStatus(
+      'ghi kết quả thành công',
+      () => markAutomationCompleted(firestore, run, 'success', results),
+    )
+    return results
+  } catch (error) {
+    await safelyUpdateAutomationStatus(
+      'ghi lỗi',
+      () => markAutomationCompleted(firestore, run, 'failure', [], error),
+    )
+    throw error
   }
 }

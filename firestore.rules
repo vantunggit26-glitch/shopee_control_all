@@ -100,6 +100,12 @@ rules_version = '2';
 // a channel that is visible only to authenticated application users. The
 // trusted Admin SDK automation is the only writer.
 //
+// Document: _syncState/telegram_automation
+// Contains operational status and bounded recent-run summaries for the
+// Telegram GitHub Actions workflow. It contains no credentials or Telegram
+// session values. Authenticated application users may read this fixed document;
+// the trusted Admin SDK automation is the only writer.
+//
 // Collection: privateConfig/{configId}
 // Documents contain private integration configuration. Only the fixed
 // administrator may read them; all client writes are denied.
@@ -553,6 +559,13 @@ service cloud.firestore {
     match /todoAuthenticated/{todoId} {
       // This collection contains messages from an account-only Telegram
       // channel. Authentication is required even for direct Firestore reads.
+      allow read: if isAuthenticated();
+
+      // No client writes are allowed. The Admin SDK automation bypasses rules.
+    }
+
+    match /_syncState/telegram_automation {
+      // Operational status is visible only inside the authenticated app.
       allow read: if isAuthenticated();
 
       // No client writes are allowed. The Admin SDK automation bypasses rules.
