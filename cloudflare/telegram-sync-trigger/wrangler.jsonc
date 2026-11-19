@@ -5,6 +5,9 @@
   "compatibility_date": "2026-11-19",
   "workers_dev": true,
   "preview_urls": false,
+  "triggers": {
+    "crons": ["7,27,47 * * * *"]
+  },
   "observability": {
     "enabled": true
   },

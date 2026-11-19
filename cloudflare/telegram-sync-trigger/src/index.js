@@ -60,22 +60,54 @@ function workflowApiUrl(env, suffix = '') {
   return `https://api.github.com/repos/${owner}/${repository}/actions/workflows/${workflowId}${suffix}`
 }
 
-async function getLatestWorkflowRun(env) {
-  const response = await fetch(workflowApiUrl(env, '/runs?per_page=1'), {
-    headers: githubHeaders(env),
-  })
-  if (!response.ok) return null
-
-  const payload = await response.json()
-  return Array.isArray(payload.workflow_runs) ? payload.workflow_runs[0] || null : null
+function githubFailure(response, error) {
+  return {
+    status: 502,
+    body: {
+      error,
+      githubStatus: response.status,
+      githubRequestId: response.headers.get('x-github-request-id') || '',
+    },
+  }
 }
 
-async function dispatchWorkflow(env) {
-  return fetch(workflowApiUrl(env, '/dispatches'), {
+async function requestWorkflowRun(env) {
+  const runsResponse = await fetch(workflowApiUrl(env, '/runs?per_page=10'), {
+    headers: githubHeaders(env),
+    signal: AbortSignal.timeout(15_000),
+  })
+  if (!runsResponse.ok) {
+    return githubFailure(runsResponse, 'Không thể kiểm tra các lượt đồng bộ trên GitHub.')
+  }
+
+  const { workflow_runs: runs } = await runsResponse.json()
+  if (!Array.isArray(runs)) throw new Error('GitHub không trả về danh sách lượt đồng bộ.')
+
+  const activeRun = runs.find((run) => run.status !== 'completed')
+  if (activeRun) {
+    return {
+      status: 409,
+      body: {
+        error: 'Một lượt đồng bộ đang chờ hoặc đang chạy.',
+        runUrl: activeRun.html_url || '',
+      },
+    }
+  }
+
+  const dispatchResponse = await fetch(workflowApiUrl(env, '/dispatches'), {
     method: 'POST',
     headers: githubHeaders(env),
     body: JSON.stringify({ ref: 'main' }),
+    signal: AbortSignal.timeout(15_000),
   })
+  if (!dispatchResponse.ok) {
+    return githubFailure(dispatchResponse, 'GitHub từ chối yêu cầu chạy workflow.')
+  }
+
+  return {
+    status: 202,
+    body: { message: 'Đã gửi yêu cầu đồng bộ tới GitHub Actions.' },
+  }
 }
 
 async function handleTrigger(request, env) {
@@ -94,27 +126,8 @@ async function handleTrigger(request, env) {
     return responseJson(request, env, 403, { error: 'Tài khoản không có quyền chạy đồng bộ.' })
   }
 
-  const latestRun = await getLatestWorkflowRun(env)
-  if (latestRun && ['queued', 'in_progress', 'waiting', 'pending', 'requested'].includes(latestRun.status)) {
-    return responseJson(request, env, 409, {
-      error: 'Một lượt đồng bộ đang chờ hoặc đang chạy.',
-      runUrl: latestRun.html_url || '',
-    })
-  }
-
-  const dispatchResponse = await dispatchWorkflow(env)
-  if (!dispatchResponse.ok) {
-    const githubRequestId = dispatchResponse.headers.get('x-github-request-id') || ''
-    return responseJson(request, env, 502, {
-      error: 'GitHub từ chối yêu cầu chạy workflow.',
-      githubStatus: dispatchResponse.status,
-      githubRequestId,
-    })
-  }
-
-  return responseJson(request, env, 202, {
-    message: 'Đã gửi yêu cầu đồng bộ tới GitHub Actions.',
-  })
+  const result = await requestWorkflowRun(env)
+  return responseJson(request, env, result.status, result.body)
 }
 
 export default {
@@ -144,5 +157,19 @@ export default {
     } catch {
       return responseJson(request, env, 500, { error: 'Không thể gửi yêu cầu đồng bộ.' })
     }
+  },
+
+  async scheduled(controller, env) {
+    const result = await requestWorkflowRun(env)
+    if (result.status === 502) {
+      const { error, githubStatus, githubRequestId } = result.body
+      throw new Error(`${error} HTTP ${githubStatus} (${githubRequestId || 'không có mã yêu cầu'})`)
+    }
+
+    console.info({
+      message: result.body.message || result.body.error,
+      outcome: result.status === 202 ? 'dispatched' : 'skipped',
+      scheduledTime: new Date(controller.scheduledTime).toISOString(),
+    })
   },
 }

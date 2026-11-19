@@ -28,8 +28,9 @@ diện hiển thị “Chưa có dữ liệu” thay vì tự tạo giá trị.
 
 ## Đồng bộ Telegram mỗi 20 phút
 
-Workflow `.github/workflows/telegram-hourly-sync.yml` đặt lịch vào các phút
-7, 27, 47 mỗi giờ (GitHub có thể chạy trễ). Workflow đọc tin mới
+Cloudflare Worker `shopee-telegram-sync-trigger` gọi workflow
+`.github/workflows/telegram-hourly-sync.yml` vào các phút 7, 27, 47 mỗi giờ.
+GitHub có thể xếp hàng sau khi nhận yêu cầu. Workflow đọc tin mới
 từ `@magiamgiavoucher` vào `todo`, và `@magiamgia_deal0d_shopee` vào
 `todoAuthenticated`, theo các từ khóa trong `functions/index.js`.
 Mốc tin nhắn cuối của từng kênh lưu trong `_syncState` để tránh ghi trùng.

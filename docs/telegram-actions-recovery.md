@@ -37,4 +37,4 @@ Mở [Repository secrets](https://github.com/vantunggit26-glitch/shopee_control_
 
 Nhóm `concurrency` cố định `telegram-session-sync` ngăn các lượt workflow này trong cùng repository chạy song song. Nếu thêm workflow khác dùng cùng secret trong repository, phải dùng cùng group. Group không khóa được tiến trình trên máy riêng hoặc repository khác, nên session Actions phải được dùng riêng. Nếu vẫn cần listener local, đăng nhập tạo session riêng cho listener và giữ ở `.telegram/session.txt`.
 
-GitHub cron không bảo đảm kích hoạt đúng từng 20 phút và có thể bị trễ/bỏ lượt khi tải cao. Nếu cron chưa tạo lượt chạy, dùng `Run workflow` để kiểm tra riêng việc kết nối Telegram, rồi theo dõi các lượt `schedule` tiếp theo.
+Cloudflare Worker `shopee-telegram-sync-trigger` gọi GitHub Actions mỗi 20 phút. Các lượt tự động xuất hiện dưới sự kiện `workflow_dispatch` như lượt thủ công. Xem log `scheduled` trong tab **Observability** của Worker để biết lượt nào đã gửi, bỏ qua vì job đang chờ hoặc đang chạy, hay gặp lỗi khi gọi GitHub. Nếu nghi lỗi kết nối Telegram, dùng `Run workflow` để kiểm tra trực tiếp trên GitHub.

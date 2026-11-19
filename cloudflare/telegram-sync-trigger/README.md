@@ -1,8 +1,11 @@
 # Telegram sync trigger Worker
 
-This Worker accepts an authenticated request from the Account Vault UI and
-triggers `.github/workflows/telegram-hourly-sync.yml` through GitHub's
-`workflow_dispatch` API.
+This Worker triggers `.github/workflows/telegram-hourly-sync.yml` through
+GitHub's `workflow_dispatch` API every 20 minutes at :07, :27, and :47 UTC.
+It also accepts authenticated requests from the Account Vault UI. Both paths
+skip dispatch when a recent run is queued or running. The workflow's
+concurrency group serializes any requests that arrive at the same time.
+Scheduled dispatch outcomes are available in Cloudflare Workers Observability.
 
 Security boundaries:
 
