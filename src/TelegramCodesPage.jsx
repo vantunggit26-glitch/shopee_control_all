@@ -16,6 +16,7 @@ import {
   DownOutlined,
   CopyOutlined,
   SearchOutlined,
+  SyncOutlined,
   UpOutlined,
 } from '@ant-design/icons'
 import {
@@ -28,7 +29,7 @@ import {
   serverTimestamp,
   setDoc,
 } from 'firebase/firestore'
-import { db } from './firebase'
+import { db, TELEGRAM_SYNC_TRIGGER_URL } from './firebase'
 
 const { Title, Text, Paragraph, Link } = Typography
 const FILTER_KEYWORDS = [
@@ -270,6 +271,8 @@ export default function TelegramCodesPage({ user = null }) {
   const [syncStatus, setSyncStatus] = useState(null)
   const [syncStatusError, setSyncStatusError] = useState('')
   const [showSyncLogs, setShowSyncLogs] = useState(false)
+  const [isTriggeringSync, setIsTriggeringSync] = useState(false)
+  const [triggerCooldownUntil, setTriggerCooldownUntil] = useState(0)
   const [currentTime, setCurrentTime] = useState(() => Date.now())
   const [isPublicLoading, setIsPublicLoading] = useState(true)
   const [isAuthenticatedLoading, setIsAuthenticatedLoading] = useState(Boolean(user?.uid))
@@ -447,6 +450,48 @@ export default function TelegramCodesPage({ user = null }) {
     }
   }, [currentTime, syncStatus])
 
+  const triggerCooldownSeconds = Math.max(
+    0,
+    Math.ceil((triggerCooldownUntil - currentTime) / 1000),
+  )
+
+  async function triggerTelegramSync() {
+    if (!user?.uid || isTriggeringSync || triggerCooldownSeconds > 0) return
+    if (!TELEGRAM_SYNC_TRIGGER_URL) {
+      message.error('Endpoint đồng bộ thủ công chưa được cấu hình.')
+      return
+    }
+
+    setIsTriggeringSync(true)
+    try {
+      const idToken = await user.getIdToken()
+      const response = await fetch(TELEGRAM_SYNC_TRIGGER_URL, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${idToken}`,
+          'content-type': 'application/json',
+        },
+      })
+      const payload = await response.json().catch(() => ({}))
+      if (response.status === 409) {
+        setTriggerCooldownUntil(Date.now() + 30_000)
+        message.info(payload.error || 'Một lượt đồng bộ đang chạy.')
+        return
+      }
+      if (!response.ok) {
+        throw new Error(payload.error || 'Không thể gửi yêu cầu đồng bộ.')
+      }
+
+      setTriggerCooldownUntil(Date.now() + 60_000)
+      setCurrentTime(Date.now())
+      message.success(payload.message || 'Đã gửi yêu cầu đồng bộ tới GitHub Actions.')
+    } catch (triggerError) {
+      message.error(triggerError.message || 'Không thể chạy đồng bộ thủ công.')
+    } finally {
+      setIsTriggeringSync(false)
+    }
+  }
+
   async function changePlatform(value) {
     if (!(value in PLATFORM_META) || value === platformFilter) return
 
@@ -587,14 +632,26 @@ export default function TelegramCodesPage({ user = null }) {
               <strong>Sau {formatCountdown(syncView.nextSchedule.getTime() - currentTime)}</strong>
               <span>Mỗi {syncView.intervalMinutes} phút · GitHub có thể trì hoãn</span>
             </div>
-            <Button
-              className="telegram-sync-log-toggle"
-              type="text"
-              icon={showSyncLogs ? <UpOutlined /> : <DownOutlined />}
-              onClick={() => setShowSyncLogs((visible) => !visible)}
-            >
-              Nhật ký ({syncView.logs.length})
-            </Button>
+            <div className="telegram-sync-actions">
+              <Button
+                icon={<SyncOutlined />}
+                loading={isTriggeringSync}
+                disabled={syncView.state === 'running' || triggerCooldownSeconds > 0}
+                onClick={triggerTelegramSync}
+              >
+                {triggerCooldownSeconds > 0
+                  ? `Chờ ${triggerCooldownSeconds}s`
+                  : 'Đồng bộ ngay'}
+              </Button>
+              <Button
+                className="telegram-sync-log-toggle"
+                type="text"
+                icon={showSyncLogs ? <UpOutlined /> : <DownOutlined />}
+                onClick={() => setShowSyncLogs((visible) => !visible)}
+              >
+                Nhật ký ({syncView.logs.length})
+              </Button>
+            </div>
           </div>
 
           {(syncView.state === 'failure' || syncView.state === 'stale') && (

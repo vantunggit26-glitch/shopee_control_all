@@ -16,3 +16,4 @@ const firebaseApp = initializeApp(firebaseConfig)
 export const auth = getAuth(firebaseApp)
 export const db = getFirestore(firebaseApp)
 export const FIREBASE_LOGIN_EMAIL = 'tungtv@account.com'
+export const TELEGRAM_SYNC_TRIGGER_URL = 'https://shopee-telegram-sync-trigger.vantunggit26.workers.dev/trigger'

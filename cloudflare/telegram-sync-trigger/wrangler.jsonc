@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "shopee-telegram-sync-trigger",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-19",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "vars": {
+    "ALLOWED_ORIGINS": "https://shopeetung.web.app,http://localhost:5173",
+    "ALLOWED_EMAIL": "tungtv@account.com",
+    "FIREBASE_WEB_API_KEY": "AIzaSyD53nJqEn-nfHpc4V_gQCl_4qH_mMzNomE",
+    "GITHUB_OWNER": "vantunggit26-glitch",
+    "GITHUB_REPOSITORY": "shopee_control_all",
+    "GITHUB_WORKFLOW_ID": "telegram-hourly-sync.yml"
+  },
+  "secrets": {
+    "required": [
+      "GITHUB_TOKEN"
+    ]
+  }
+}

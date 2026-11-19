@@ -1456,6 +1456,20 @@
   font-size: 12px;
 }
 
+.telegram-sync-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.telegram-sync-actions > .ant-btn:first-child {
+  color: #2f3742;
+  border-color: #cfd4da;
+  background: #fff;
+  font-size: 12px;
+}
+
 .telegram-sync-notice {
   padding: 10px 18px;
   border-top: 1px solid #eee5d6;
@@ -1649,7 +1663,7 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .telegram-sync-log-toggle.ant-btn {
+  .telegram-sync-actions {
     justify-self: start;
   }
 
