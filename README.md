@@ -26,10 +26,10 @@ trong `privateConfig/addlivetag`; không ghi API key, cookie hoặc mật khẩu
 nguồn. Dữ liệu Lazada có thể thiếu đánh giá hoặc một số trường khác, khi đó giao
 diện hiển thị “Chưa có dữ liệu” thay vì tự tạo giá trị.
 
-## Đồng bộ Telegram mỗi 10 phút
+## Đồng bộ Telegram mỗi 20 phút
 
 Workflow `.github/workflows/telegram-hourly-sync.yml` đặt lịch vào các phút
-7, 17, 27, 37, 47, 57 mỗi giờ (GitHub có thể chạy trễ). Workflow đọc tin mới
+7, 27, 47 mỗi giờ (GitHub có thể chạy trễ). Workflow đọc tin mới
 từ `@magiamgiavoucher` vào `todo`, và `@magiamgia_deal0d_shopee` vào
 `todoAuthenticated`, theo các từ khóa trong `functions/index.js`.
 Mốc tin nhắn cuối của từng kênh lưu trong `_syncState` để tránh ghi trùng.

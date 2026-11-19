@@ -31,10 +31,10 @@ Mở [Repository secrets](https://github.com/vantunggit26-glitch/shopee_control_
 
 ## Chạy lại và xác nhận
 
-1. Mở [workflow Telegram sync every 10 minutes](https://github.com/vantunggit26-glitch/shopee_control_all/actions/workflows/telegram-hourly-sync.yml).
+1. Mở [workflow Telegram sync every 20 minutes](https://github.com/vantunggit26-glitch/shopee_control_all/actions/workflows/telegram-hourly-sync.yml).
 2. Chọn **Run workflow**, nhánh `main`, rồi chạy. Cách này dùng mã mới nhất; Re-run một lượt cũ sẽ chạy lại commit cũ.
 3. Bước `Synchronize Telegram messages` phải báo đồng bộ từng kênh thành công. Nếu còn lỗi, xem dòng lỗi và Job Summary mới để xác định.
 
 Nhóm `concurrency` cố định `telegram-session-sync` ngăn các lượt workflow này trong cùng repository chạy song song. Nếu thêm workflow khác dùng cùng secret trong repository, phải dùng cùng group. Group không khóa được tiến trình trên máy riêng hoặc repository khác, nên session Actions phải được dùng riêng. Nếu vẫn cần listener local, đăng nhập tạo session riêng cho listener và giữ ở `.telegram/session.txt`.
 
-GitHub cron không bảo đảm kích hoạt đúng từng 10 phút và có thể bị trễ/bỏ lượt khi tải cao. Nếu cron chưa tạo lượt chạy, dùng `Run workflow` để kiểm tra riêng việc kết nối Telegram, rồi theo dõi các lượt `schedule` tiếp theo.
+GitHub cron không bảo đảm kích hoạt đúng từng 20 phút và có thể bị trễ/bỏ lượt khi tải cao. Nếu cron chưa tạo lượt chạy, dùng `Run workflow` để kiểm tra riêng việc kết nối Telegram, rồi theo dõi các lượt `schedule` tiếp theo.

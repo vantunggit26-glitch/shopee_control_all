@@ -61,7 +61,7 @@ const AUTHENTICATED_CHANNEL_OPTIONS = Object.entries(CHANNEL_META).map(([value, 
   label: channel.label,
   value,
 }))
-const DEFAULT_SYNC_INTERVAL_MINUTES = 10
+const DEFAULT_SYNC_INTERVAL_MINUTES = 20
 const DEFAULT_SYNC_OFFSET_MINUTE = 7
 
 function normalizeForSearch(value) {

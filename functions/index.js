@@ -16,7 +16,7 @@ const stateCollectionName = '_syncState'
 const automationStatusDocumentName = 'telegram_automation'
 const automationLogLimit = 20
 const syncScheduleMinutes = Number.parseInt(
-  process.env.TELEGRAM_SYNC_SCHEDULE_MINUTES || '10',
+  process.env.TELEGRAM_SYNC_SCHEDULE_MINUTES || '20',
   10,
 )
 const syncScheduleOffsetMinute = Number.parseInt(
@@ -125,7 +125,7 @@ async function markAutomationStarted(firestore, run) {
 
   await statusReference.set({
     status: 'running',
-    workflowName: 'Telegram sync every 10 minutes',
+    workflowName: 'Telegram sync every 20 minutes',
     scheduleMinutes: syncScheduleMinutes,
     scheduleOffsetMinute: syncScheduleOffsetMinute,
     currentRun: {
