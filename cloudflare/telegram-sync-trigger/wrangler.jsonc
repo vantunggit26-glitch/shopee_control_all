@@ -11,6 +11,9 @@
   "observability": {
     "enabled": true
   },
+  "kv_namespaces": [
+    { "binding": "SYNC_STATUS", "id": "a68bf38bdd0e458980c8e74985607514" }
+  ],
   "vars": {
     "ALLOWED_ORIGINS": "https://shopeetung.web.app,http://localhost:5173",
     "ALLOWED_EMAIL": "tungtv@account.com",

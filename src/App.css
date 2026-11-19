@@ -1353,6 +1353,51 @@
   color: #596472;
 }
 
+.voucher-heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.voucher-load-more {
+  display: flex;
+  justify-content: center;
+  padding: 8px 16px 16px;
+}
+
+.voucher-sync-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 16px;
+  border-top: 1px solid #e8eaed;
+  font-size: 12px;
+  color: #596472;
+}
+
+.website-source-status {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.website-source-status > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 8px 12px;
+  border: 1px solid #dfe2e6;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.website-source-status > div.is-stale {
+  background: #fffaf0;
+  border-color: #f0d9a5;
+}
+
 .website-voucher-panel .ant-card-body {
   padding: 20px;
 }
@@ -1370,7 +1415,7 @@
 
 .website-voucher-filters {
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) minmax(130px, 1fr) minmax(180px, 2fr);
+  grid-template-columns: repeat(3, minmax(120px, 1fr)) minmax(180px, 2fr);
   gap: 12px;
   margin: 18px 0;
 }
@@ -1444,7 +1489,7 @@
   border-bottom: 1px solid #e8eaed;
 }
 
-@media (max-width: 600px) {
+@media (max-width: 750px) {
   .website-voucher-panel .ant-card-body {
     padding: 14px;
   }
@@ -1664,7 +1709,7 @@
 .telegram-toolbar {
   padding: 14px 20px;
   display: grid;
-  grid-template-columns: minmax(210px, 1.1fr) minmax(160px, .7fr) minmax(190px, .9fr) minmax(230px, 1.25fr);
+  grid-template-columns: minmax(160px, 1.1fr) minmax(140px, .8fr) minmax(130px, .8fr) minmax(135px, .8fr) minmax(170px, 1.2fr);
   align-items: end;
   gap: 12px;
   background: #fafafa;
@@ -1672,7 +1717,7 @@
 }
 
 .telegram-toolbar.is-guest {
-  grid-template-columns: minmax(160px, .7fr) minmax(190px, .9fr) minmax(260px, 1.4fr);
+  grid-template-columns: repeat(3, minmax(135px, 1fr)) minmax(170px, 1.3fr);
 }
 
 .telegram-filter-field {
@@ -1780,7 +1825,8 @@
     justify-self: start;
   }
 
-  .telegram-toolbar {
+  .telegram-toolbar,
+  .telegram-toolbar.is-guest {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -1833,7 +1879,8 @@
     padding: 0;
   }
 
-  .telegram-toolbar {
+  .telegram-toolbar,
+  .telegram-toolbar.is-guest {
     grid-template-columns: 1fr;
   }
 }

@@ -193,7 +193,10 @@ async function markAutomationCompleted(firestore, run, status, results, error = 
     updatedAt: FieldValue.serverTimestamp(),
   }
 
-  if (status === 'success') update.lastSuccessAt = Timestamp.fromDate(completedAt)
+  if (status === 'success') {
+    update.lastSuccessAt = Timestamp.fromDate(completedAt)
+    update.lastSuccessSummary = summary
+  }
   if (status === 'failure') update.lastFailureAt = Timestamp.fromDate(completedAt)
 
   await statusReference.set(update, { merge: true })

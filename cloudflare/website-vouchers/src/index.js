@@ -127,10 +127,31 @@ async function collectSource(key, now) {
 }
 
 async function syncSource(kv, key, now) {
-  const [previous, fresh] = await Promise.all([kv.get(key, 'json'), collectSource(key, now)])
+  const previous = await kv.get(key, 'json')
+  let fresh
+  try {
+    fresh = await collectSource(key, now)
+  } catch (error) {
+    const lastError = /^VoucherSan returned HTTP \d{3}$/.test(error.message)
+      ? error.message : 'Không thể tải dữ liệu từ VoucherSan.'
+    const failed = { records: [], ...previous, checkedAt: now, lastError }
+    await kv.put(key, JSON.stringify(failed), { expirationTtl: RETENTION_SECONDS })
+    throw error
+  }
   const records = mergeHistory(previous?.records ?? [], fresh, now)
-  await kv.put(key, JSON.stringify({ records, updatedAt: now }), { expirationTtl: RETENTION_SECONDS })
+  const known = new Set((previous?.records ?? []).map(({ id }) => id))
+  const newCount = records.filter(({ id }) => !known.has(id)).length
+  await kv.put(key, JSON.stringify({ records, updatedAt: now, checkedAt: now, newCount }), { expirationTtl: RETENTION_SECONDS })
   console.info({ message: 'VoucherSan refreshed', source: key, received: fresh.length, stored: records.length })
+}
+
+function sourceStatus(snapshot) {
+  return {
+    lastSuccessAt: snapshot.updatedAt ?? null,
+    lastAttemptAt: snapshot.checkedAt ?? snapshot.updatedAt ?? null,
+    newCount: snapshot.newCount ?? null,
+    lastError: snapshot.lastError ?? '',
+  }
 }
 
 export default {
@@ -171,6 +192,7 @@ export default {
       feed: mergeHistory([], feed.records, now),
       featuredUpdatedAt: featured.updatedAt,
       feedUpdatedAt: feed.updatedAt,
+      status: { featured: sourceStatus(featured), feed: sourceStatus(feed) },
     }, { headers })
   },
 }

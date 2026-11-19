@@ -9,6 +9,7 @@
     "lint": "node ./node_modules/eslint/bin/eslint.js .",
     "preview": "node ./node_modules/vite/bin/vite.js preview",
     "db:backup": "node scripts/firestore-backup.js export",
+    "db:protect": "node scripts/firestore-backup.js protect",
     "db:verify": "node scripts/firestore-backup.js verify",
     "db:restore": "node scripts/firestore-backup.js restore",
     "functions:install": "npm --prefix functions install",

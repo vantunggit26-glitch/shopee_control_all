@@ -2,6 +2,9 @@ const jsonHeaders = {
   'content-type': 'application/json; charset=utf-8',
   'cache-control': 'no-store',
 }
+const statusKey = 'telegram:dispatch:latest'
+const acceptedKey = 'telegram:dispatch:accepted'
+const statusTtl = 7 * 24 * 60 * 60
 
 function getAllowedOrigin(request, env) {
   const requestOrigin = request.headers.get('origin') || ''
@@ -110,7 +113,42 @@ async function requestWorkflowRun(env) {
   }
 }
 
-async function handleTrigger(request, env) {
+async function dispatchAndRecord(env, source) {
+  let result
+  try {
+    result = await requestWorkflowRun(env)
+  } catch {
+    result = { status: 502, body: { error: 'Không thể kết nối GitHub Actions.' } }
+  }
+  const at = Date.now()
+  const outcome = result.status === 202 ? 'sent' : result.status === 409 ? 'skipped' : 'failed'
+  if (env.SYNC_STATUS) {
+    try {
+      const status = { at, source, outcome, error: outcome === 'failed' ? result.body.error : '' }
+      const writes = [env.SYNC_STATUS.put(statusKey, JSON.stringify(status), { expirationTtl: statusTtl })]
+      if (outcome === 'sent') writes.push(env.SYNC_STATUS.put(acceptedKey, JSON.stringify(at), { expirationTtl: statusTtl }))
+      await Promise.all(writes)
+    } catch {
+      console.warn('Không thể lưu trạng thái Cloudflare Telegram.')
+    }
+  }
+  return result
+}
+
+async function latestRunStatus(env) {
+  const response = await fetch(workflowApiUrl(env, '/runs?branch=main&per_page=1'), {
+    headers: githubHeaders(env),
+    signal: AbortSignal.timeout(8_000),
+  })
+  if (!response.ok) throw new Error('Không đọc được trạng thái GitHub Actions.')
+  const { workflow_runs: runs } = await response.json()
+  const run = runs?.[0]
+  return run ? {
+    id: run.id, createdAt: run.created_at, status: run.status, conclusion: run.conclusion, url: run.html_url,
+  } : null
+}
+
+async function handleRequest(request, env, readStatus) {
   if (!getAllowedOrigin(request, env)) {
     return responseJson(request, env, 403, { error: 'Nguồn gửi yêu cầu không được phép.' })
   }
@@ -126,7 +164,21 @@ async function handleTrigger(request, env) {
     return responseJson(request, env, 403, { error: 'Tài khoản không có quyền chạy đồng bộ.' })
   }
 
-  const result = await requestWorkflowRun(env)
+  if (readStatus) {
+    const [dispatch, acceptedAt, github] = await Promise.allSettled([
+      env.SYNC_STATUS?.get(statusKey, 'json'),
+      env.SYNC_STATUS?.get(acceptedKey, 'json'),
+      latestRunStatus(env),
+    ])
+    return responseJson(request, env, 200, {
+      dispatch: dispatch.value ?? null,
+      acceptedAt: acceptedAt.value ?? null,
+      github: github.value ?? null,
+      githubError: github.status === 'rejected' ? 'Không đọc được trạng thái GitHub Actions.' : '',
+    })
+  }
+
+  const result = await dispatchAndRecord(env, 'manual')
   return responseJson(request, env, result.status, result.body)
 }
 
@@ -141,26 +193,27 @@ export default {
         headers: {
           'access-control-allow-origin': allowedOrigin,
           'access-control-allow-headers': 'authorization, content-type',
-          'access-control-allow-methods': 'POST, OPTIONS',
+          'access-control-allow-methods': 'GET, POST, OPTIONS',
           'access-control-max-age': '86400',
           vary: 'Origin',
         },
       })
     }
 
-    if (url.pathname !== '/trigger' || request.method !== 'POST') {
+    const readStatus = url.pathname === '/status' && request.method === 'GET'
+    if (!readStatus && (url.pathname !== '/trigger' || request.method !== 'POST')) {
       return responseJson(request, env, 404, { error: 'Không tìm thấy endpoint.' })
     }
 
     try {
-      return await handleTrigger(request, env)
+      return await handleRequest(request, env, readStatus)
     } catch {
       return responseJson(request, env, 500, { error: 'Không thể gửi yêu cầu đồng bộ.' })
     }
   },
 
   async scheduled(controller, env) {
-    const result = await requestWorkflowRun(env)
+    const result = await dispatchAndRecord(env, 'schedule')
     if (result.status === 502) {
       const { error, githubStatus, githubRequestId } = result.body
       throw new Error(`${error} HTTP ${githubStatus} (${githubRequestId || 'không có mã yêu cầu'})`)

@@ -111,3 +111,23 @@ test('fails the scheduled invocation if GitHub rejects the status check', async 
   await assert.rejects(worker.scheduled(scheduledEvent, env), /HTTP 401 \(request-id\)/)
   assert.equal(fetchMock.mock.callCount(), 1)
 })
+
+test('status requires an authorized administrator and returns bounded operational metadata', async (context) => {
+  const headers = { Origin: 'https://shopeetung.web.app' }
+  const path = 'https://worker.example/status'
+  assert.equal((await worker.fetch(new Request(path, { headers }), env)).status, 401)
+  const fetchMock = context.mock.method(globalThis, 'fetch', async (url) => {
+    if (String(url).includes('googleapis.com')) return Response.json({ users: [{ email: env.ALLOWED_EMAIL }] })
+    return Response.json({ workflow_runs: [{ id: 123, status: 'queued', internal: 'omit' }] })
+  })
+  const response = await worker.fetch(new Request(path, {
+    headers: { ...headers, authorization: 'Bearer firebase-token' },
+  }), {
+    ...env, SYNC_STATUS: { get: async () => null },
+  })
+  assert.equal(response.status, 200)
+  const status = await response.json()
+  assert.equal(status.github.status, 'queued')
+  assert.equal(status.github.internal, undefined)
+  assert.equal(fetchMock.mock.callCount(), 2)
+})

@@ -30,12 +30,35 @@ rules_version = '2';
 // Collection: users/{userId}/credentials/{credentialId}
 // Document ID: Firestore-generated ID
 // Fields:
-//   - siteName: string (required, 1-100 characters)
-//   - url: string (required, 1-2048 characters, HTTP/HTTPS only)
-//   - username: string (required, 1-320 characters)
-//   - password: string (required, 1-500 characters)
+//   - cryptoVersion: integer (required, fixed value 1)
+//   - iv: string (required, 16-character unpadded Base64URL AES-GCM IV)
+//   - payload: string (required, 22-25000 character unpadded Base64URL ciphertext)
 //   - createdAt: timestamp (required, immutable)
 //   - updatedAt: timestamp (required, server-managed)
+// Legacy plaintext documents remain owner-readable and deletable. They may be
+// updated exactly once into the encrypted shape above; new plaintext documents
+// are rejected.
+//
+// Document: users/{userId}/vaultSettings/passwords
+// Fixed document containing the client-side vault key derivation verifier.
+// Fields:
+//   - version: integer (required, fixed value 1)
+//   - salt: string (required, 22-character unpadded Base64URL)
+//   - iv: string (required, 16-character unpadded Base64URL)
+//   - check: string (required, 22-256 character unpadded Base64URL ciphertext)
+//   - createdAt: timestamp (required, immutable, server-managed)
+// This document is create-only and owner-readable; client update/delete and
+// collection listing are denied.
+//
+// Collection: users/{userId}/savedVouchers/{voucherId}
+// Document ID: lowercase SHA-256 hex digest (exactly 64 characters)
+// Fields:
+//   - source: string (required, telegram or website)
+//   - title: string (required, 1-520 characters)
+//   - url: string (required, 1-2048 characters, HTTPS only)
+//   - createdAt: timestamp (required, immutable, server-managed)
+//   - expiresAt: timestamp (optional)
+// Documents are owner-readable, create-only, and owner-deletable.
 //
 // Collection: users/{userId}/notes/{noteId}
 // Document ID: Firestore-generated ID; ownership is scoped to userId.
@@ -112,10 +135,11 @@ rules_version = '2';
 // Fields for privateConfig/addlivetag:
 //   - apiKey: string (required, sensitive)
 //
-// Accounts, credentials and preferences belong to the authenticated user
-// identified by userId. Credential documents contain private plaintext data
-// and are never readable by other users. Discount codes and products contain
-// no private user data and are intentionally public to read; only the fixed
+// Accounts, credentials, vault settings, saved vouchers and preferences belong
+// to the authenticated user identified by userId. Credential documents contain
+// private encrypted data (plus owner-only legacy plaintext during migration)
+// and are never readable by other users. Discount codes and products contain no
+// private user data and are intentionally public to read; only the fixed
 // administrator can write them.
 // ===============================================================
 
@@ -272,7 +296,14 @@ service cloud.firestore {
         && data.createdAt is timestamp;
     }
 
-    function isValidCredential(data) {
+    function isValidBase64Url(value, minLength, maxLength) {
+      return value is string
+        && value.size() >= minLength
+        && value.size() <= maxLength
+        && value.matches('^[A-Za-z0-9_-]+$');
+    }
+
+    function isValidLegacyCredential(data) {
       return hasRequiredFields(data, ['siteName', 'url', 'username', 'password', 'createdAt', 'updatedAt'])
         && hasOnlyAllowedFields(data, ['siteName', 'url', 'username', 'password', 'createdAt', 'updatedAt'])
         && data.siteName is string
@@ -290,6 +321,56 @@ service cloud.firestore {
         && data.password.size() <= 500
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
+    }
+
+    function isValidEncryptedCredential(data) {
+      return hasRequiredFields(data, [
+          'cryptoVersion',
+          'iv',
+          'payload',
+          'createdAt',
+          'updatedAt'
+        ])
+        && hasOnlyAllowedFields(data, [
+          'cryptoVersion',
+          'iv',
+          'payload',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.cryptoVersion is int
+        && data.cryptoVersion == 1
+        && isValidBase64Url(data.iv, 16, 16)
+        && isValidBase64Url(data.payload, 22, 25000)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidVaultPasswordSettings(data) {
+      return hasRequiredFields(data, ['version', 'salt', 'iv', 'check', 'createdAt'])
+        && hasOnlyAllowedFields(data, ['version', 'salt', 'iv', 'check', 'createdAt'])
+        && data.version is int
+        && data.version == 1
+        && isValidBase64Url(data.salt, 22, 22)
+        && isValidBase64Url(data.iv, 16, 16)
+        && isValidBase64Url(data.check, 22, 256)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidSavedVoucher(data) {
+      return hasRequiredFields(data, ['source', 'title', 'url', 'createdAt'])
+        && hasOnlyAllowedFields(data, ['source', 'title', 'url', 'createdAt', 'expiresAt'])
+        && data.source is string
+        && data.source in ['telegram', 'website']
+        && data.title is string
+        && data.title.size() >= 1
+        && data.title.size() <= 520
+        && data.url is string
+        && data.url.size() >= 1
+        && data.url.size() <= 2048
+        && data.url.matches('^https://.*')
+        && data.createdAt is timestamp
+        && (!('expiresAt' in data) || data.expiresAt is timestamp);
     }
 
     function isValidDiscountCodePreference(data) {
@@ -497,13 +578,49 @@ service cloud.firestore {
 
       allow create: if isOwner(userId)
         && uidUnchanged()
-        && isValidCredential(request.resource.data)
+        && exists(/databases/$(database)/documents/users/$(userId)/vaultSettings/passwords)
+        && isValidEncryptedCredential(request.resource.data)
         && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if isOwner(userId)
+        && uidNotModified()
+        && exists(/databases/$(database)/documents/users/$(userId)/vaultSettings/passwords)
+        && !('cryptoVersion' in resource.data)
+        && resource.data.password is string
+        && isValidLegacyCredential(resource.data)
+        && isValidEncryptedCredential(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.updatedAt == request.time;
 
       allow delete: if isOwner(userId);
 
-      // Credential edits are not supported; replace the record instead.
+      // The only edit is a one-time legacy plaintext-to-ciphertext migration.
+    }
+
+    match /users/{userId}/vaultSettings/passwords {
+      allow get: if isOwner(userId);
+
+      allow create: if isOwner(userId)
+        && uidUnchanged()
+        && isValidVaultPasswordSettings(request.resource.data)
+        && request.resource.data.createdAt == request.time;
+
+      // Vault settings are immutable. Client list/update/delete are denied.
+    }
+
+    match /users/{userId}/savedVouchers/{voucherId} {
+      allow get, list: if isOwner(userId);
+
+      allow create: if isOwner(userId)
+        && voucherId.matches('^[a-f0-9]{64}$')
+        && uidUnchanged()
+        && isValidSavedVoucher(request.resource.data)
+        && request.resource.data.createdAt == request.time;
+
+      allow delete: if isOwner(userId);
+
+      // Saved voucher documents are immutable; clients delete and recreate.
     }
 
     match /users/{userId}/notes/{noteId} {

@@ -11,7 +11,8 @@ lưu riêng tại `users/{uid}/notes` và đồng bộ giữa các thiết bị 
 ## Sao lưu dữ liệu Firebase về máy
 
 Chạy `npm run db:backup` để lưu toàn bộ Firestore và ảnh Base64 vào `backups/`.
-File được nén, có checksum, và không được đưa lên Git. Xem [hướng dẫn kiểm tra và khôi phục](docs/firestore-backup.md).
+File được nén, mã hóa bằng mật khẩu backup, có checksum và không được đưa lên Git.
+Xem [hướng dẫn kiểm tra và khôi phục](docs/firestore-backup.md).
 
 ## Kho sản phẩm Shopee và Lazada
 

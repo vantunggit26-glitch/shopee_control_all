@@ -10,7 +10,6 @@ import {
   Input,
   Popconfirm,
   Space,
-  Statistic,
   Table,
   Tag,
   Typography,
@@ -23,22 +22,25 @@ import {
   GlobalOutlined,
   KeyOutlined,
   LinkOutlined,
+  LockOutlined,
   PlusOutlined,
   SafetyCertificateOutlined,
   SearchOutlined,
   UserOutlined,
 } from '@ant-design/icons'
 import {
-  addDoc,
   collection,
   deleteDoc,
   doc,
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
+  setDoc,
 } from 'firebase/firestore'
 import { db } from './firebase'
+import { createVault, openVaultValue, sealVaultValue, unlockVault } from './vaultCrypto'
 
 const { Title, Text, Paragraph, Link } = Typography
 
@@ -83,8 +85,17 @@ function formatUpdatedAt(timestamp) {
 }
 
 export default function CredentialsPage({ user }) {
+  return <CredentialVault key={user.uid} uid={user.uid} />
+}
+
+function CredentialVault({ uid }) {
   const { message } = AntApp.useApp()
   const [form] = Form.useForm()
+  const [unlockForm] = Form.useForm()
+  const [settings, setSettings] = useState(undefined)
+  const [vaultKey, setVaultKey] = useState(null)
+  const [unlocking, setUnlocking] = useState(false)
+  const [migrationCount, setMigrationCount] = useState(null)
   const [credentials, setCredentials] = useState([])
   const [search, setSearch] = useState('')
   const [error, setError] = useState('')
@@ -94,33 +105,121 @@ export default function CredentialsPage({ user }) {
   const [revealedIds, setRevealedIds] = useState(() => new Set())
 
   useEffect(() => {
+    if (vaultKey) return undefined
+    return onSnapshot(doc(db, 'users', uid, 'vaultSettings', 'passwords'),
+      (snapshot) => { setSettings(snapshot.exists() ? snapshot.data() : null); setError('') },
+      () => setError('Không đọc được cấu hình kho mật khẩu. Hãy tải lại trang.'))
+  }, [uid, vaultKey])
+
+  useEffect(() => {
+    if (!vaultKey) return undefined
+    let active = true
+    let revision = 0
     const credentialsQuery = query(
-      collection(db, 'users', user.uid, 'credentials'),
+      collection(db, 'users', uid, 'credentials'),
       orderBy('createdAt', 'desc'),
     )
 
     const unsubscribe = onSnapshot(
       credentialsQuery,
-      (snapshot) => {
-        setCredentials(snapshot.docs.map((credentialDoc) => {
+      async (snapshot) => {
+        const current = ++revision
+        const rows = await Promise.all(snapshot.docs.map(async (credentialDoc) => {
           const data = credentialDoc.data()
+          const id = credentialDoc.id
+          if (data.cryptoVersion === 1) {
+            try {
+              const login = await openVaultValue(vaultKey, data, `${uid}/credentials/${id}`)
+              return { ...login, id, createdAt: data.createdAt, updatedAt: data.updatedAt, encrypted: true }
+            } catch {
+              return { id, createdAt: data.createdAt, updatedAt: data.updatedAt, unreadable: true }
+            }
+          }
           return {
-            id: credentialDoc.id,
             ...data,
-            legacyEncrypted: 'ciphertext' in data,
+            id,
+            unreadable: typeof data.password !== 'string',
           }
         }))
+        if (!active || current !== revision) return
+        setCredentials(rows)
         setError('')
         setIsLoading(false)
       },
       () => {
+        revision += 1
         setError('Không thể tải danh sách đăng nhập. Firestore Rules mới có thể chưa được triển khai.')
         setIsLoading(false)
       },
     )
 
-    return unsubscribe
-  }, [user.uid])
+    return () => { active = false; unsubscribe() }
+  }, [uid, vaultKey])
+
+  async function openVault({ password }) {
+    setUnlocking(true)
+    setError('')
+    try {
+      let key
+      if (settings) {
+        key = await unlockVault(password, uid, settings)
+      } else {
+        const candidate = await createVault(password, uid)
+        const reference = doc(db, 'users', uid, 'vaultSettings', 'passwords')
+        const existing = await runTransaction(db, async (transaction) => {
+          const snapshot = await transaction.get(reference)
+          if (snapshot.exists()) return snapshot.data()
+          transaction.set(reference, { ...candidate.settings, createdAt: serverTimestamp() })
+          return null
+        })
+        key = existing ? await unlockVault(password, uid, existing) : candidate.key
+      }
+      unlockForm.resetFields()
+      setIsLoading(true)
+      setVaultKey(key)
+    } catch {
+      setError('Không mở được kho. Kiểm tra mật khẩu chính và kết nối, rồi thử lại.')
+    } finally {
+      setUnlocking(false)
+    }
+  }
+
+  function lockVault() {
+    form.resetFields()
+    setVaultKey(null)
+    setSettings(undefined)
+    setCredentials([])
+    setRevealedIds(new Set())
+    setError('')
+  }
+
+  async function migrateCredentials() {
+    if (!vaultKey || migrationCount !== null) return
+    const legacy = credentials.filter((entry) => !entry.encrypted && !entry.unreadable)
+    let count = 0
+    setMigrationCount(0)
+    setError('')
+    try {
+      for (const { id } of legacy) {
+        const reference = doc(db, 'users', uid, 'credentials', id)
+        const migrated = await runTransaction(db, async (transaction) => {
+          const snapshot = await transaction.get(reference)
+          const data = snapshot.data()
+          if (!data || data.cryptoVersion || typeof data.password !== 'string') return false
+          const { siteName, url, username, password } = data
+          const sealed = await sealVaultValue(vaultKey, { siteName, url, username, password }, `${uid}/credentials/${id}`)
+          transaction.set(reference, { ...sealed, cryptoVersion: 1, createdAt: data.createdAt, updatedAt: serverTimestamp() })
+          return true
+        })
+        if (migrated) { count += 1; setMigrationCount(count) }
+      }
+      message.success(`Đã mã hóa ${count} thông tin đăng nhập cũ`)
+    } catch {
+      setError(`Đã chuyển ${count} bản ghi. Có thể bấm mã hóa lại để tiếp tục các bản ghi còn lại.`)
+    } finally {
+      setMigrationCount(null)
+    }
+  }
 
   const filteredCredentials = useMemo(() => {
     const searchText = search.trim().toLocaleLowerCase('vi')
@@ -130,6 +229,7 @@ export default function CredentialsPage({ user }) {
   }, [credentials, search])
 
   async function addCredential(values) {
+    if (!vaultKey) return
     if (!validateWebUrl(values.url)) {
       form.setFields([{ name: 'url', errors: ['URL phải bắt đầu bằng http:// hoặc https://'] }])
       return
@@ -138,11 +238,16 @@ export default function CredentialsPage({ user }) {
     setIsSaving(true)
     setError('')
     try {
-      await addDoc(collection(db, 'users', user.uid, 'credentials'), {
+      const reference = doc(collection(db, 'users', uid, 'credentials'))
+      const sealed = await sealVaultValue(vaultKey, {
         siteName: values.siteName.trim(),
         url: values.url.trim(),
         username: values.username.trim(),
         password: values.password,
+      }, `${uid}/credentials/${reference.id}`)
+      await setDoc(reference, {
+        ...sealed,
+        cryptoVersion: 1,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       })
@@ -159,7 +264,7 @@ export default function CredentialsPage({ user }) {
     setDeletingId(id)
     setError('')
     try {
-      await deleteDoc(doc(db, 'users', user.uid, 'credentials', id))
+      await deleteDoc(doc(db, 'users', uid, 'credentials', id))
       message.success('Đã xóa thông tin đăng nhập')
     } catch {
       setError('Không thể xóa thông tin đăng nhập.')
@@ -192,12 +297,12 @@ export default function CredentialsPage({ user }) {
       key: 'website',
       sorter: (left, right) => compareVietnameseText(left.siteName, right.siteName),
       sortDirections: ['ascend', 'descend'],
-      render: (_value, record) => record.legacyEncrypted ? (
+      render: (_value, record) => record.unreadable ? (
         <Space size={12}>
           <Avatar className="website-avatar" icon={<KeyOutlined />} />
           <div className="credential-site-cell">
-            <Text strong>Bản ghi mã hóa cũ</Text>
-            <Text type="secondary">Không thể đọc sau khi bỏ khóa bảo vệ</Text>
+            <Text strong>Bản ghi mã hóa</Text>
+            <Text type="secondary">Không giải mã được bằng kho hiện tại</Text>
           </div>
         </Space>
       ) : (
@@ -215,7 +320,7 @@ export default function CredentialsPage({ user }) {
       dataIndex: 'username',
       key: 'username',
       width: 220,
-      render: (username, record) => record.legacyEncrypted
+      render: (username, record) => record.unreadable
         ? <Text type="secondary">—</Text>
         : <Text copyable={{ text: username, tooltips: ['Sao chép', 'Đã sao chép'] }}>{username}</Text>,
     },
@@ -223,7 +328,7 @@ export default function CredentialsPage({ user }) {
       title: 'Mật khẩu',
       key: 'password',
       width: 240,
-      render: (_value, record) => record.legacyEncrypted ? <Text type="secondary">—</Text> : (
+      render: (_value, record) => record.unreadable ? <Text type="secondary">—</Text> : (
         <Space size={4}>
           <Text code className="password-value">{revealedIds.has(record.id) ? record.password : '••••••••••'}</Text>
           <Button type="text" icon={revealedIds.has(record.id) ? <EyeInvisibleOutlined /> : <EyeOutlined />} onClick={() => togglePassword(record.id)} aria-label="Hiện hoặc ẩn mật khẩu" />
@@ -235,11 +340,13 @@ export default function CredentialsPage({ user }) {
       title: 'Trạng thái',
       key: 'security',
       width: 140,
-      sorter: (left, right) => Number(left.legacyEncrypted) - Number(right.legacyEncrypted),
+      sorter: (left, right) => Number(Boolean(left.encrypted)) - Number(Boolean(right.encrypted)),
       sortDirections: ['ascend', 'descend'],
-      render: (_value, record) => record.legacyEncrypted
-        ? <Tag color="warning">Dữ liệu cũ</Tag>
-        : <Tag color="blue" icon={<SafetyCertificateOutlined />}>Theo tài khoản</Tag>,
+      render: (_value, record) => record.unreadable
+        ? <Tag color="warning">Chưa đọc được</Tag>
+        : record.encrypted
+          ? <Tag color="blue" icon={<SafetyCertificateOutlined />}>Đã mã hóa</Tag>
+          : <Tag color="warning">Chờ mã hóa</Tag>,
     },
     {
       title: 'Giờ cập nhật',
@@ -271,17 +378,42 @@ export default function CredentialsPage({ user }) {
         <div>
           <Text className="section-kicker">QUẢN LÝ ĐĂNG NHẬP</Text>
           <Title level={2}>Đăng nhập website</Title>
-          <Paragraph type="secondary">Lưu URL cùng tài khoản và mật khẩu, truy cập ngay không cần mở khóa kho.</Paragraph>
+          <Paragraph type="secondary">Thông tin đăng nhập được mã hóa trên thiết bị trước khi lưu.</Paragraph>
         </div>
-        <Card className="stat-card" variant="borderless"><Statistic title="Trang đã lưu" value={credentials.length} prefix={<GlobalOutlined />} /></Card>
+        {vaultKey && <Button icon={<LockOutlined />} onClick={lockVault} disabled={isSaving || migrationCount !== null}>Khóa kho</Button>}
       </section>
 
-      <Alert
-        className="credential-security-note"
-        type="info"
-        showIcon
-        message="Dữ liệu chỉ được đọc bởi tài khoản Firebase của bạn theo Security Rules. Mật khẩu không còn được mã hóa bằng khóa riêng."
-      />
+      {!vaultKey ? (
+        <Card className="panel-card" title={settings === null ? 'Tạo mật khẩu chính' : 'Mở khóa kho mật khẩu'}>
+          <Paragraph type="secondary">
+            Dùng mật khẩu chính này để mở kho trên các thiết bị của bạn. Hãy lưu ở nơi an toàn để có thể giải mã dữ liệu.
+          </Paragraph>
+          <Form form={unlockForm} layout="vertical" onFinish={openVault} disabled={settings === undefined || unlocking}>
+            <Form.Item label="Mật khẩu chính" name="password" rules={[{ required: true }, { min: 12, max: 256 }]}>
+              <Input.Password autoComplete={settings === null ? 'new-password' : 'current-password'} maxLength={256} />
+            </Form.Item>
+            {settings === null && (
+              <Form.Item label="Nhập lại mật khẩu chính" name="confirmation" dependencies={['password']}
+                rules={[{ required: true }, ({ getFieldValue }) => ({
+                  validator: (_rule, value) => value === getFieldValue('password')
+                    ? Promise.resolve() : Promise.reject(new Error('Hai mật khẩu chưa trùng nhau.')),
+                })]}>
+                <Input.Password autoComplete="new-password" maxLength={256} />
+              </Form.Item>
+            )}
+            <Button type="primary" htmlType="submit" loading={unlocking || (settings === undefined && !error)}>
+              {settings === null ? 'Tạo kho' : 'Mở khóa'}
+            </Button>
+          </Form>
+          {error && <Alert className="data-alert" type="error" message={error} showIcon />}
+        </Card>
+      ) : (
+        <>
+      {credentials.some((entry) => !entry.encrypted && !entry.unreadable) && (
+        <Alert className="credential-security-note" type="warning" showIcon
+          message="Có thông tin đăng nhập cũ đang chờ mã hóa."
+          action={<Button loading={migrationCount !== null} onClick={migrateCredentials}>Mã hóa bản ghi cũ</Button>} />
+      )}
 
       <Card className="panel-card" title={<Space><PlusOutlined className="panel-title-icon add" /><span>Thêm thông tin đăng nhập</span></Space>}>
         <Paragraph type="secondary" className="panel-description">Điền URL cùng tài khoản và mật khẩu của trang đó.</Paragraph>
@@ -318,6 +450,8 @@ export default function CredentialsPage({ user }) {
           locale={{ emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={search ? 'Không tìm thấy trang phù hợp' : 'Chưa lưu thông tin đăng nhập nào'} /> }}
         />
       </Card>
+        </>
+      )}
     </>
   )
 }

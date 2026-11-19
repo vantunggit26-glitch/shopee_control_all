@@ -20,17 +20,17 @@ import {
   UpOutlined,
 } from '@ant-design/icons'
 import {
-  collection,
   doc,
-  limit,
   onSnapshot,
-  orderBy,
-  query,
   serverTimestamp,
   setDoc,
 } from 'firebase/firestore'
-import { db, TELEGRAM_SYNC_TRIGGER_URL } from './firebase'
+import { db, FIREBASE_LOGIN_EMAIL, TELEGRAM_SYNC_TRIGGER_URL } from './firebase'
 import WebsiteVouchers from './WebsiteVouchers'
+import { SavedVouchers, VoucherSaveButton } from './SavedVouchers'
+import { useSavedVouchers, voucherBookmark } from './useSavedVouchers'
+import { useTelegramHistory } from './useTelegramHistory'
+import { OFFER_OPTIONS, matchesOfferFilter, uniqueVouchers, voucherExpiry } from './voucherUtils'
 
 const { Title, Text, Paragraph, Link } = Typography
 const FILTER_KEYWORDS = [
@@ -48,7 +48,6 @@ const FILTER_KEYWORDS = [
   '120K/0Đ',
   '110K/0Đ',
 ]
-const MESSAGE_QUERY_LIMIT = 1000
 const DEFAULT_PLATFORM = 'shopee'
 const PLATFORM_META = {
   shopee: { label: 'Shopee', color: 'orange' },
@@ -264,6 +263,9 @@ function normalizeMessage(documentSnapshot, fallbackChannelKey) {
 
 export default function TelegramCodesPage({ user = null }) {
   const [mode, setMode] = useState('telegram')
+  const [showSaved, setShowSaved] = useState(false)
+  const savedVouchers = useSavedVouchers(user?.uid)
+  const saved = user?.uid ? savedVouchers : null
   const subtitle = mode === 'website' ? 'Ưu đãi Shopee và Lazada tổng hợp từ VoucherSan.'
     : user?.uid
       ? 'Theo dõi ưu đãi từ các kênh công khai và kênh dành cho tài khoản đăng nhập.'
@@ -276,42 +278,52 @@ export default function TelegramCodesPage({ user = null }) {
           <Title level={2}>Mã giảm giá</Title>
           <Paragraph type="secondary">{subtitle}</Paragraph>
         </div>
-        <div className="voucher-mode-picker">
-          <span>Chế độ bảng</span>
-          <Segmented
-            value={mode}
-            onChange={setMode}
-            options={[{ value: 'telegram', label: 'Telegram' }, { value: 'website', label: 'Website' }]}
-            aria-label="Chọn chế độ bảng mã giảm giá"
-          />
+        <div className="voucher-heading-actions">
+          <div className="voucher-mode-picker">
+            <span>Chế độ bảng</span>
+            <Segmented
+              value={mode}
+              onChange={(value) => { setMode(value); setShowSaved(false) }}
+              options={[{ value: 'telegram', label: 'Telegram' }, { value: 'website', label: 'Website' }]}
+              aria-label="Chọn chế độ bảng mã giảm giá"
+            />
+          </div>
+          {saved && (
+            <Button type={showSaved ? 'primary' : 'default'} aria-pressed={showSaved}
+              onClick={() => setShowSaved((value) => !value)}>Mã đã lưu ({saved.items.length})</Button>
+          )}
         </div>
       </section>
-      {mode === 'website' ? <WebsiteVouchers /> : <TelegramVouchers user={user} />}
+      {showSaved && saved ? <SavedVouchers saved={saved} /> : mode === 'website'
+        ? <WebsiteVouchers saved={saved} /> : <TelegramVouchers key={user?.uid || 'guest'} user={user} saved={saved} />}
     </>
   )
 }
 
-function TelegramVouchers({ user }) {
+function TelegramVouchers({ user, saved }) {
   const { message } = AntApp.useApp()
-  const [publicMessages, setPublicMessages] = useState([])
-  const [authenticatedMessages, setAuthenticatedMessages] = useState([])
   const [platformFilter, setPlatformFilter] = useState(DEFAULT_PLATFORM)
   const [channelFilter, setChannelFilter] = useState(user?.uid ? 'all' : PUBLIC_CHANNEL_KEY)
   const [viewFilter, setViewFilter] = useState('today')
+  const [offerFilter, setOfferFilter] = useState('all')
   const [search, setSearch] = useState('')
-  const [error, setError] = useState('')
   const [preferenceError, setPreferenceError] = useState('')
   const [syncStatus, setSyncStatus] = useState(null)
   const [syncStatusError, setSyncStatusError] = useState('')
+  const [workerStatus, setWorkerStatus] = useState(null)
   const [showSyncLogs, setShowSyncLogs] = useState(false)
   const [isTriggeringSync, setIsTriggeringSync] = useState(false)
   const [triggerCooldownUntil, setTriggerCooldownUntil] = useState(0)
   const [currentTime, setCurrentTime] = useState(() => Date.now())
-  const [isPublicLoading, setIsPublicLoading] = useState(true)
-  const [isAuthenticatedLoading, setIsAuthenticatedLoading] = useState(Boolean(user?.uid))
   const [isPreferenceLoading, setIsPreferenceLoading] = useState(Boolean(user?.uid))
   const [isPreferenceSaving, setIsPreferenceSaving] = useState(false)
-  const today = getDayKey(new Date())
+  const today = getDayKey(new Date(currentTime))
+  const todayStart = Date.parse(`${today}T00:00:00+07:00`)
+  const cutoff = viewFilter === 'today' ? todayStart : todayStart - 4 * 86_400_000
+  const publicHistory = useTelegramHistory('todo', !isPreferenceLoading && channelFilter !== AUTHENTICATED_CHANNEL_KEY, cutoff)
+  const privateHistory = useTelegramHistory('todoAuthenticated',
+    Boolean(user?.uid && !isPreferenceLoading && channelFilter !== PUBLIC_CHANNEL_KEY), cutoff, user?.uid)
+  const canTrigger = user?.email?.toLowerCase() === FIREBASE_LOGIN_EMAIL
 
   useEffect(() => {
     const timer = window.setInterval(() => setCurrentTime(Date.now()), 30_000)
@@ -332,6 +344,27 @@ function TelegramVouchers({ user }) {
       },
     )
   }, [user?.uid])
+
+  useEffect(() => {
+    if (!canTrigger || !TELEGRAM_SYNC_TRIGGER_URL) return undefined
+    const lifetime = new AbortController()
+    async function readWorkerStatus() {
+      try {
+        const token = await user.getIdToken()
+        const response = await fetch(new URL('status', TELEGRAM_SYNC_TRIGGER_URL), {
+          signal: lifetime.signal, headers: { authorization: `Bearer ${token}` },
+        })
+        if (!response.ok) throw new Error('Worker status unavailable')
+        const status = await response.json()
+        if (!lifetime.signal.aborted) setWorkerStatus(status)
+      } catch {
+        if (!lifetime.signal.aborted) setWorkerStatus({ workerError: 'Không đọc được trạng thái Cloudflare.' })
+      }
+    }
+    void readWorkerStatus()
+    const interval = window.setInterval(readWorkerStatus, 60_000)
+    return () => { lifetime.abort(); window.clearInterval(interval) }
+  }, [canTrigger, user])
 
   useEffect(() => {
     if (!user?.uid) return undefined
@@ -356,59 +389,16 @@ function TelegramVouchers({ user }) {
     return unsubscribe
   }, [user?.uid])
 
-  useEffect(() => {
-    const messagesQuery = query(
-      collection(db, 'todo'),
-      orderBy('messageDate', 'desc'),
-      limit(MESSAGE_QUERY_LIMIT),
-    )
-    const unsubscribe = onSnapshot(
-      messagesQuery,
-      (snapshot) => {
-        setPublicMessages(snapshot.docs.map((item) => normalizeMessage(item, PUBLIC_CHANNEL_KEY)))
-        setError('')
-        setIsPublicLoading(false)
-      },
-      () => {
-        setError('Không thể tải tin Telegram. Hãy kiểm tra Firestore Rules đã được triển khai.')
-        setIsPublicLoading(false)
-      },
-    )
-
-    return unsubscribe
-  }, [])
-
-  useEffect(() => {
-    if (!user?.uid) return undefined
-
-    const messagesQuery = query(
-      collection(db, 'todoAuthenticated'),
-      orderBy('messageDate', 'desc'),
-      limit(MESSAGE_QUERY_LIMIT),
-    )
-    return onSnapshot(
-      messagesQuery,
-      (snapshot) => {
-        setAuthenticatedMessages(snapshot.docs.map((item) => (
-          normalizeMessage(item, AUTHENTICATED_CHANNEL_KEY)
-        )))
-        setError('')
-        setIsAuthenticatedLoading(false)
-      },
-      () => {
-        setError('Không thể tải kênh dành cho tài khoản đăng nhập. Hãy kiểm tra Firestore Rules.')
-        setIsAuthenticatedLoading(false)
-      },
-    )
-  }, [user?.uid])
-
   const telegramMessages = useMemo(
-    () => [...publicMessages, ...authenticatedMessages].sort((left, right) => {
+    () => [
+      ...publicHistory.docs.map((item) => normalizeMessage(item, PUBLIC_CHANNEL_KEY)),
+      ...privateHistory.docs.map((item) => normalizeMessage(item, AUTHENTICATED_CHANNEL_KEY)),
+    ].sort((left, right) => {
       const leftTime = left.messageDate?.toMillis?.() || 0
       const rightTime = right.messageDate?.toMillis?.() || 0
       return rightTime - leftTime
     }),
-    [authenticatedMessages, publicMessages],
+    [privateHistory.docs, publicHistory.docs],
   )
 
   const channelMessages = useMemo(
@@ -425,8 +415,7 @@ function TelegramVouchers({ user }) {
 
   const filteredMessages = useMemo(() => {
     const searchText = normalizeForSearch(search.trim())
-    return platformMessages.filter((item) => {
-      const matchesView = viewFilter === 'all' || item.messageDay === today
+    const matches = platformMessages.filter((item) => {
       const searchableText = normalizeForSearch([
         item.text,
         ...(item.detectedCodes || []),
@@ -434,9 +423,11 @@ function TelegramVouchers({ user }) {
         ...(item.resolvedLinks || []),
         item.chatTitle,
       ].join(' '))
-      return matchesView && (!searchText || searchableText.includes(searchText))
+      return (!searchText || searchableText.includes(searchText))
+        && matchesOfferFilter(offerFilter, item.text, voucherExpiry(item.text), currentTime)
     })
-  }, [platformMessages, today, viewFilter, search])
+    return uniqueVouchers(matches, (item) => normalizeForSearch(item.text))
+  }, [platformMessages, offerFilter, currentTime, search])
 
   const syncView = useMemo(() => {
     const intervalMinutes = Number(syncStatus?.scheduleMinutes)
@@ -447,7 +438,7 @@ function TelegramVouchers({ user }) {
     const lastSuccess = toDate(syncStatus?.lastSuccessAt)
     const lastAttempt = toDate(syncStatus?.lastAttemptAt)
     const nextSchedule = getNextScheduledTime(currentTime, intervalMinutes, offsetMinute)
-    const staleAfterMs = intervalMinutes * 2.5 * 60 * 1000
+    const staleAfterMs = intervalMinutes * 2 * 60 * 1000
     const referenceDate = syncStatus?.status === 'running' ? lastAttempt : lastSuccess
     const isStale = Boolean(referenceDate && currentTime - referenceDate.getTime() > staleAfterMs)
     let state = syncStatus?.status || 'waiting'
@@ -464,6 +455,25 @@ function TelegramVouchers({ user }) {
       label = 'GitHub Actions đang trễ'
     }
     if (state === 'failure') label = 'Lần chạy gần nhất bị lỗi'
+    const latestRun = workerStatus?.github
+    const latestRunTime = toDate(latestRun?.createdAt)
+    const isLatest = latestRunTime && (!lastAttempt || latestRunTime.getTime() >= lastAttempt.getTime() - 15 * 60_000)
+    const pendingDispatch = Number(workerStatus?.acceptedAt) > (lastAttempt?.getTime() || 0) + 2_000
+      && currentTime - Number(workerStatus.acceptedAt) < staleAfterMs
+    if (latestRun?.status === 'in_progress' && isLatest) {
+      state = 'running'
+      label = 'GitHub đang chạy'
+    } else if (latestRun?.status && latestRun.status !== 'completed' && isLatest) {
+      state = 'queued'
+      label = 'GitHub đang xếp hàng'
+    } else if (latestRun?.status === 'completed' && isLatest && latestRun.conclusion !== 'success'
+      && !pendingDispatch) {
+      state = 'failure'
+      label = 'GitHub báo lỗi'
+    } else if (pendingDispatch) {
+      state = 'queued'
+      label = 'Cloudflare đã gửi yêu cầu'
+    }
 
     return {
       intervalMinutes,
@@ -472,8 +482,11 @@ function TelegramVouchers({ user }) {
       lastSuccess,
       nextSchedule,
       logs: Array.isArray(syncStatus?.logs) ? syncStatus.logs : [],
+      stale: Boolean(lastSuccess && currentTime - lastSuccess.getTime() > staleAfterMs),
+      newCount: syncStatus?.lastSuccessSummary?.createdCount
+        ?? (syncStatus?.status === 'success' ? syncStatus.latestSummary?.createdCount : null),
     }
-  }, [currentTime, syncStatus])
+  }, [currentTime, syncStatus, workerStatus])
 
   const triggerCooldownSeconds = Math.max(
     0,
@@ -481,7 +494,7 @@ function TelegramVouchers({ user }) {
   )
 
   async function triggerTelegramSync() {
-    if (!user?.uid || isTriggeringSync || triggerCooldownSeconds > 0) return
+    if (!canTrigger || isTriggeringSync || triggerCooldownSeconds > 0) return
     if (!TELEGRAM_SYNC_TRIGGER_URL) {
       message.error('Endpoint đồng bộ thủ công chưa được cấu hình.')
       return
@@ -509,6 +522,9 @@ function TelegramVouchers({ user }) {
 
       setTriggerCooldownUntil(Date.now() + 60_000)
       setCurrentTime(Date.now())
+      setWorkerStatus((status) => ({
+        ...status, acceptedAt: Date.now(), dispatch: { outcome: 'sent', at: Date.now() },
+      }))
       message.success(payload.message || 'Đã gửi yêu cầu đồng bộ tới GitHub Actions.')
     } catch (triggerError) {
       message.error(triggerError.message || 'Không thể chạy đồng bộ thủ công.')
@@ -589,6 +605,9 @@ function TelegramVouchers({ user }) {
                 Mở tin gốc
               </Link>
             )}
+            <VoucherSaveButton saved={saved} offer={voucherBookmark(
+              'telegram', text, record.resolvedLinks[0] || record.links[0] || record.sourceLink, voucherExpiry(text),
+            )} />
           </div>
           <Paragraph ellipsis={{ rows: 4, expandable: true, symbol: 'Xem thêm' }}>
             {renderLinkedMessage(text, record.links || [], record.resolvedLinks || record.links || [])}
@@ -620,6 +639,11 @@ function TelegramVouchers({ user }) {
     },
   ]
 
+  const historyError = publicHistory.error || privateHistory.error
+  const hasMore = publicHistory.hasMore || privateHistory.hasMore
+  const dispatch = workerStatus?.dispatch
+  const dispatchLabel = { sent: 'Đã gửi yêu cầu', skipped: 'Bỏ qua vì có lượt đang chạy', failed: 'Gửi yêu cầu thất bại' }
+
   return (
     <>
       {user?.uid && (
@@ -628,7 +652,7 @@ function TelegramVouchers({ user }) {
             <div className="telegram-sync-state">
               <span className="telegram-sync-dot" aria-hidden="true" />
               <div>
-                <Text type="secondary">GitHub Actions</Text>
+                <Text type="secondary">Đồng bộ Telegram</Text>
                 <strong>{syncView.label}</strong>
               </div>
             </div>
@@ -636,23 +660,24 @@ function TelegramVouchers({ user }) {
               <Text type="secondary">Thành công gần nhất</Text>
               <strong>{formatElapsed(syncView.lastSuccess, currentTime)}</strong>
               <span>{formatDateTime(syncView.lastSuccess)}</span>
+              {Number.isFinite(syncView.newCount) && <span>{syncView.newCount} tin mới</span>}
             </div>
             <div className="telegram-sync-metric">
               <Text type="secondary">Lượt lịch kế tiếp</Text>
               <strong>Sau {formatCountdown(syncView.nextSchedule.getTime() - currentTime)}</strong>
-              <span>Mỗi {syncView.intervalMinutes} phút · GitHub có thể trì hoãn</span>
+              <span>Cloudflare đặt lịch mỗi {syncView.intervalMinutes} phút</span>
             </div>
             <div className="telegram-sync-actions">
-              <Button
+              {canTrigger && <Button
                 icon={<SyncOutlined />}
                 loading={isTriggeringSync}
-                disabled={syncView.state === 'running' || triggerCooldownSeconds > 0}
+                disabled={['running', 'queued'].includes(syncView.state) || triggerCooldownSeconds > 0}
                 onClick={triggerTelegramSync}
               >
                 {triggerCooldownSeconds > 0
                   ? `Chờ ${triggerCooldownSeconds}s`
                   : 'Đồng bộ ngay'}
-              </Button>
+              </Button>}
               <Button
                 className="telegram-sync-log-toggle"
                 type="text"
@@ -664,11 +689,21 @@ function TelegramVouchers({ user }) {
             </div>
           </div>
 
-          {(syncView.state === 'failure' || syncView.state === 'stale') && (
+          {dispatch && (
+            <div className="voucher-sync-detail">
+              Cloudflare · {dispatchLabel[dispatch.outcome]} · {formatDateTime(dispatch.at)}
+              {dispatch.error ? ` · ${dispatch.error}` : ''}
+              {workerStatus.github?.url && <Link href={workerStatus.github.url} target="_blank" rel="noopener noreferrer">Mở lượt chạy GitHub</Link>}
+            </div>
+          )}
+          {(workerStatus?.workerError || workerStatus?.githubError) && (
+            <div className="voucher-sync-detail">{workerStatus.workerError || workerStatus.githubError}</div>
+          )}
+          {(syncView.state === 'failure' || syncView.state === 'stale' || syncView.stale) && (
             <div className="telegram-sync-notice">
               {syncView.state === 'failure'
-                ? (syncStatus?.lastError || 'Job đã kết thúc với lỗi nhưng chưa có nội dung chi tiết.')
-                : `Không có lần đồng bộ thành công trong hơn ${Math.ceil(syncView.intervalMinutes * 2.5)} phút.`}
+                ? (syncStatus?.lastError || 'Xem lượt chạy GitHub để kiểm tra lỗi gần nhất.')
+                : `Đã hơn ${syncView.intervalMinutes * 2} phút kể từ lần đồng bộ thành công.`}
             </div>
           )}
 
@@ -694,7 +729,7 @@ function TelegramVouchers({ user }) {
 
       {preferenceError && <Alert className="telegram-error-alert" type="warning" message={preferenceError} showIcon closable onClose={() => setPreferenceError('')} />}
 
-      {error && <Alert className="data-alert telegram-error-alert" type="error" message={error} showIcon closable onClose={() => setError('')} />}
+      {historyError && <Alert className="data-alert telegram-error-alert" type="error" message={historyError} showIcon />}
 
       <Card className="panel-card telegram-list-card">
         <div className="telegram-list-heading">
@@ -702,7 +737,7 @@ function TelegramVouchers({ user }) {
             <Title level={4}>Danh sách ưu đãi</Title>
             <Text type="secondary">Dữ liệu được giữ trong 5 ngày và cập nhật tự động.</Text>
           </div>
-          <Text type="secondary">{filteredMessages.length} kết quả · {platformMessages.length} tin trong 5 ngày</Text>
+          <Text type="secondary">{filteredMessages.length} kết quả đã tải</Text>
         </div>
         <div className={`telegram-toolbar ${user?.uid ? '' : 'is-guest'}`}>
           {user?.uid && (
@@ -741,6 +776,11 @@ function TelegramVouchers({ user }) {
               ]}
             />
           </label>
+          <label className="telegram-filter-field">
+            <span>Ưu đãi</span>
+            <Select value={offerFilter} options={OFFER_OPTIONS} onChange={setOfferFilter}
+              aria-label="Lọc loại ưu đãi Telegram" />
+          </label>
           <label className="telegram-filter-field telegram-search-field">
             <span>Tìm kiếm</span>
             <Input
@@ -758,18 +798,24 @@ function TelegramVouchers({ user }) {
           rowKey="id"
           columns={columns}
           dataSource={filteredMessages}
-          loading={isPublicLoading || isAuthenticatedLoading}
+          loading={isPreferenceLoading || publicHistory.loading || privateHistory.loading}
           pagination={{ pageSize: 20, hideOnSinglePage: true }}
           scroll={{ x: 780 }}
           locale={{
             emptyText: (
               <Empty
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
-                description={search ? 'Không tìm thấy tin phù hợp' : 'Chưa có tin Telegram trong bộ lọc này'}
+                description={hasMore ? 'Tải thêm để tìm trong các tin cũ hơn.' : 'Chưa có tin Telegram trong bộ lọc này'}
               />
             ),
           }}
         />
+        {hasMore && (
+          <div className="voucher-load-more">
+            <Button loading={publicHistory.loadingMore || privateHistory.loadingMore}
+              onClick={() => { void publicHistory.loadMore(); void privateHistory.loadMore() }}>Tải thêm tin Telegram</Button>
+          </div>
+        )}
       </Card>
     </>
   )

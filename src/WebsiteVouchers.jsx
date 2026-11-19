@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Alert, Button, Card, Empty, Input, Pagination, Select, Space, Spin, Typography } from 'antd'
 import { ExportOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons'
+import { VoucherSaveButton } from './SavedVouchers'
+import { voucherBookmark } from './useSavedVouchers'
+import { OFFER_OPTIONS, matchesOfferFilter, uniqueVouchers, voucherExpiry, voucherText } from './voucherUtils'
 
 const { Link, Text, Title } = Typography
 const SOURCE_URL = 'https://vouchersan.com/ma-hot/'
@@ -40,13 +43,14 @@ function OfferLinks({ links, label }) {
   )
 }
 
-export default function WebsiteVouchers() {
+export default function WebsiteVouchers({ saved }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [reload, setReload] = useState(0)
   const [platform, setPlatform] = useState('all')
   const [period, setPeriod] = useState('all')
+  const [offerFilter, setOfferFilter] = useState('all')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [featuredPage, setFeaturedPage] = useState(1)
@@ -87,20 +91,26 @@ export default function WebsiteVouchers() {
   }, [reload])
 
   const today = localDay.format(now)
-  const query = search.trim().normalize('NFKC').toLocaleLowerCase('vi')
+  const query = voucherText(search)
   function matches(item) {
+    const expiry = item.expiresAt ? item.expiresAt * 1000 : voucherExpiry(item.title)
     return (platform === 'all' || item.platforms.includes(platform))
       && (period === 'all' || localDay.format(item.observedAt * 1000) === today)
-      && [item.title, item.amount, item.minimumOrder, item.group, ...item.links].join(' ')
-        .normalize('NFKC').toLocaleLowerCase('vi').includes(query)
+      && (!query || voucherText([item.title, item.amount, item.minimumOrder, item.group, ...item.links].join(' ')).includes(query))
+      && matchesOfferFilter(offerFilter, `${item.minimumOrder || ''} ${item.title}`, expiry, now)
   }
   const featured = data?.featured.filter(matches) ?? []
-  const feed = data?.feed.filter(matches) ?? []
+  const feed = uniqueVouchers(data?.feed.filter(matches) ?? [],
+    (item) => JSON.stringify([voucherText(item.title), [...item.links].sort()]))
   const currentFeaturedPage = Math.min(featuredPage, Math.max(1, Math.ceil(featured.length / FEATURED_PAGE_SIZE)))
   const visibleFeatured = featured.slice((currentFeaturedPage - 1) * FEATURED_PAGE_SIZE, currentFeaturedPage * FEATURED_PAGE_SIZE)
   const currentPage = Math.min(page, Math.max(1, Math.ceil(feed.length / PAGE_SIZE)))
   const visibleFeed = feed.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
   const hasMissingSource = data && (!data.featuredUpdatedAt || !data.feedUpdatedAt)
+  const statuses = data ? [
+    { label: 'Mã nổi bật', lastSuccessAt: data.featuredUpdatedAt, ...data.status?.featured },
+    { label: 'Tin ưu đãi', lastSuccessAt: data.feedUpdatedAt, ...data.status?.feed },
+  ] : []
 
   function resetPages() {
     setPage(1)
@@ -124,6 +134,23 @@ export default function WebsiteVouchers() {
           Làm mới
         </Button>
       </div>
+      {!!statuses.length && (
+        <div className="website-source-status" aria-label="Trạng thái đồng bộ Website">
+          {statuses.map((status) => {
+            const stale = status.lastSuccessAt && now - status.lastSuccessAt * 1000 > 40 * 60_000
+            return (
+              <div key={status.label} className={stale || status.lastError ? 'is-stale' : ''}>
+                <strong>{status.label}</strong>
+                <Text type="secondary">{status.lastSuccessAt
+                  ? `Thành công ${formatTime(status.lastSuccessAt)}` : 'Chờ đồng bộ'}</Text>
+                {Number.isFinite(status.newCount) && <Text type="secondary">{status.newCount} mục mới</Text>}
+                {status.lastError && <Text type="danger">{status.lastError}</Text>}
+                {stale && <Text type="warning">Dữ liệu đã quá 40 phút</Text>}
+              </div>
+            )
+          })}
+        </div>
+      )}
       <div className="website-voucher-filters">
         <div className="telegram-filter-field">
           <span>Sàn</span>
@@ -134,6 +161,11 @@ export default function WebsiteVouchers() {
             options={[{ value: 'all', label: 'Tất cả sàn' }, ...Object.entries(platformNames)
               .map(([value, label]) => ({ value, label }))]}
           />
+        </div>
+        <div className="telegram-filter-field">
+          <span>Ưu đãi</span>
+          <Select aria-label="Lọc loại ưu đãi Website" value={offerFilter} options={OFFER_OPTIONS}
+            onChange={(value) => { setOfferFilter(value); resetPages() }} />
         </div>
         <div className="telegram-filter-field">
           <span>Thời gian</span>
@@ -181,6 +213,9 @@ export default function WebsiteVouchers() {
                         <div className="website-voucher-card-footer">
                           {offer.expiresAt && <Text type="secondary">{expired ? 'Đã hết hạn' : `HSD ${expiryDate.format(offer.expiresAt * 1000)}`}</Text>}
                           <OfferLinks links={offer.links} label="Mở ưu đãi" />
+                          <VoucherSaveButton saved={saved} offer={voucherBookmark(
+                            'website', offer.title, offer.links[0], offer.expiresAt ? offer.expiresAt * 1000 : null,
+                          )} />
                         </div>
                       </article>
                     )
@@ -210,7 +245,12 @@ export default function WebsiteVouchers() {
                         <Text type="secondary">{formatTime(item.publishedAt)}{item.kind === 'back' ? ' · Back lượt' : ''}</Text>
                       </div>
                       <p>{item.title}</p>
-                      <OfferLinks links={item.links} label="Mở ưu đãi" />
+                      <Space wrap>
+                        <OfferLinks links={item.links} label="Mở ưu đãi" />
+                        <VoucherSaveButton saved={saved} offer={voucherBookmark(
+                          'website', item.title, item.links[0], voucherExpiry(item.title),
+                        )} />
+                      </Space>
                     </article>
                   ))}
                 </div>

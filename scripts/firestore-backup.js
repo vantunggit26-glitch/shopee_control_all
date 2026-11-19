@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { gzip, gunzip } from 'node:zlib'
+import { decryptBackup, encryptBackup, isEncryptedBackup, readBackupPassphrase } from './backup-crypto.js'
 
 const compress = promisify(gzip)
 const decompress = promisify(gunzip)
@@ -51,9 +52,13 @@ export function validateBackup(envelope) {
   return envelope.data
 }
 
-async function loadBackup(file) {
-  if (!file) throw new Error('Cần chỉ định --file backups/<ten-file>.json.gz')
-  const envelope = JSON.parse((await decompress(await readFile(resolve(file)))).toString('utf8'))
+async function loadBackup(file, passphrase) {
+  if (!file) throw new Error('Cần chỉ định --file backups/<ten-file>.json.gz.enc')
+  const stored = await readFile(resolve(file))
+  const compressed = isEncryptedBackup(stored)
+    ? await decryptBackup(stored, passphrase ?? await readBackupPassphrase())
+    : stored
+  const envelope = JSON.parse((await decompress(compressed)).toString('utf8'))
   return validateBackup(envelope)
 }
 
@@ -96,6 +101,7 @@ async function createApiClient() {
 }
 
 async function exportDatabase() {
+  const passphrase = await readBackupPassphrase(true)
   const api = await createApiClient()
   const database = await api(apiPath(databaseName))
   if (database.data.databaseEdition !== 'STANDARD') throw new Error('Script này dành cho Firestore Standard hiện tại.')
@@ -150,14 +156,28 @@ async function exportDatabase() {
     documents,
   }
   const envelope = { format, sha256: checksum(data), data }
-  const fileName = `firestore-${projectId}-${readTime.replace(/[:.]/g, '-')}.json.gz`
+  const fileName = `firestore-${projectId}-${readTime.replace(/[:.]/g, '-')}.json.gz.enc`
   const file = join(backupDirectory, fileName)
   await mkdir(backupDirectory, { recursive: true })
-  await writeFile(file, await compress(JSON.stringify(envelope)), { flag: 'wx', mode: 0o600 })
-  await loadBackup(file)
+  const encrypted = await encryptBackup(await compress(JSON.stringify(envelope)), passphrase)
+  await writeFile(file, encrypted, { flag: 'wx', mode: 0o600 })
+  await loadBackup(file, passphrase)
   console.log(`Đã lưu và xác minh ${documents.length} document tại ${file}`)
   console.log('Backup gồm mọi collection con và ảnh Base64. Không bao gồm Firebase Authentication hoặc file Cloud Storage.')
   return file
+}
+
+async function protectExistingBackup(file) {
+  if (!file) throw new Error('Cần chỉ định --file trỏ tới bản backup .json.gz.')
+  const source = resolve(file)
+  const compressed = await readFile(source)
+  if (isEncryptedBackup(compressed)) throw new Error('File này đã được mã hóa.')
+  validateBackup(JSON.parse((await decompress(compressed)).toString('utf8')))
+  const passphrase = await readBackupPassphrase(true)
+  const target = `${source}.enc`
+  await writeFile(target, await encryptBackup(compressed, passphrase), { flag: 'wx', mode: 0o600 })
+  await loadBackup(target, passphrase)
+  console.log(`Đã mã hóa và xác minh ${target}. Bản gốc vẫn nằm tại ${source}.`)
 }
 
 async function restoreDatabase(file, apply, confirmation, overwrite) {
@@ -170,11 +190,21 @@ async function restoreDatabase(file, apply, confirmation, overwrite) {
   }
   if (confirmation !== projectId) throw new Error('Cần --confirm-project account-vault-tung để ghi dữ liệu.')
   const api = await createApiClient()
+  const vaultSettings = data.documents.filter(({ name }) => /\/users\/[^/]+\/vaultSettings\/passwords$/.test(name))
+  for (const entry of vaultSettings) {
+    const current = await api(apiPath(entry.name), { allowMissing: true })
+    if (!current) continue
+    const equalKey = ['version', 'salt', 'iv', 'check'].every((field) => (
+      JSON.stringify(current.data.fields?.[field]) === JSON.stringify(entry.fields?.[field])
+    ))
+    if (!equalKey) throw new Error('Backup có kho mật khẩu khác với kho đang dùng. Dừng trước khi khôi phục để bảo vệ dữ liệu.')
+  }
   let restored = 0
   let skipped = 0
-  for (const document of data.documents) {
+  const vaultNames = new Set(vaultSettings.map(({ name }) => name))
+  for (const document of [...vaultSettings, ...data.documents.filter(({ name }) => !vaultNames.has(name))]) {
     const current = await api(apiPath(document.name), { allowMissing: true })
-    if (current && !overwrite) {
+    if (current && (!overwrite || vaultNames.has(document.name))) {
       skipped += 1
       continue
     }
@@ -196,6 +226,7 @@ async function main() {
   const option = (name) => args[args.indexOf(name) + 1]
   const file = args.includes('--file') ? option('--file') : undefined
   if (command === 'export') return exportDatabase()
+  if (command === 'protect') return protectExistingBackup(file)
   if (command === 'verify') {
     const data = await loadBackup(file)
     console.log(`Checksum hợp lệ: ${data.documentCount} document; snapshot ${data.readTime}.`)
@@ -204,7 +235,7 @@ async function main() {
   if (command === 'restore') {
     return restoreDatabase(file, args.includes('--apply'), args.includes('--confirm-project') ? option('--confirm-project') : '', args.includes('--overwrite'))
   }
-  throw new Error('Dùng export, verify --file <file>, hoặc restore --file <file> [--apply --confirm-project account-vault-tung].')
+  throw new Error('Dùng export, protect/verify --file <file>, hoặc restore --file <file> [--apply --confirm-project account-vault-tung].')
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
