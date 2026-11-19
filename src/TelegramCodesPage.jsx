@@ -30,6 +30,7 @@ import {
   setDoc,
 } from 'firebase/firestore'
 import { db, TELEGRAM_SYNC_TRIGGER_URL } from './firebase'
+import WebsiteVouchers from './WebsiteVouchers'
 
 const { Title, Text, Paragraph, Link } = Typography
 const FILTER_KEYWORDS = [
@@ -47,7 +48,6 @@ const FILTER_KEYWORDS = [
   '120K/0Đ',
   '110K/0Đ',
 ]
-const filterKeyword = FILTER_KEYWORDS[0]
 const MESSAGE_QUERY_LIMIT = 1000
 const DEFAULT_PLATFORM = 'shopee'
 const PLATFORM_META = {
@@ -245,9 +245,6 @@ function normalizeMessage(documentSnapshot, fallbackChannelKey) {
     ...(Array.isArray(data.detectedCodes) ? data.detectedCodes : extractCodes(text)),
     ...extractCodesFromLinks(resolvedLinks),
   ])]
-  const containsNewUserKeyword = typeof data.containsNewUserKeyword === 'boolean'
-    ? data.containsNewUserKeyword
-    : normalizeForSearch(text).includes(normalizeForSearch(filterKeyword))
   const platforms = detectMessagePlatforms(text, links, resolvedLinks)
   const matchedKeyword = data.matchedKeyword || findMatchedKeyword(text)
 
@@ -260,13 +257,41 @@ function normalizeMessage(documentSnapshot, fallbackChannelKey) {
     detectedCodes,
     platforms,
     matchedKeyword,
-    containsNewUserKeyword,
     channelKey: data.channelKey || fallbackChannelKey,
     messageDay: data.messageDay || (data.messageDate?.toDate ? getDayKey(data.messageDate.toDate()) : ''),
   }
 }
 
 export default function TelegramCodesPage({ user = null }) {
+  const [mode, setMode] = useState('telegram')
+  const subtitle = mode === 'website' ? 'Ưu đãi Shopee và Lazada tổng hợp từ VoucherSan.'
+    : user?.uid
+      ? 'Theo dõi ưu đãi từ các kênh công khai và kênh dành cho tài khoản đăng nhập.'
+      : 'Theo dõi ưu đãi từ kênh công khai. Đăng nhập để xem thêm kênh riêng.'
+
+  return (
+    <>
+      <section className="telegram-page-heading">
+        <div>
+          <Title level={2}>Mã giảm giá</Title>
+          <Paragraph type="secondary">{subtitle}</Paragraph>
+        </div>
+        <div className="voucher-mode-picker">
+          <span>Chế độ bảng</span>
+          <Segmented
+            value={mode}
+            onChange={setMode}
+            options={[{ value: 'telegram', label: 'Telegram' }, { value: 'website', label: 'Website' }]}
+            aria-label="Chọn chế độ bảng mã giảm giá"
+          />
+        </div>
+      </section>
+      {mode === 'website' ? <WebsiteVouchers /> : <TelegramVouchers user={user} />}
+    </>
+  )
+}
+
+function TelegramVouchers({ user }) {
   const { message } = AntApp.useApp()
   const [publicMessages, setPublicMessages] = useState([])
   const [authenticatedMessages, setAuthenticatedMessages] = useState([])
@@ -398,18 +423,10 @@ export default function TelegramCodesPage({ user = null }) {
     [channelMessages, platformFilter],
   )
 
-  const newUserMessagesToday = useMemo(
-    () => platformMessages.filter((item) => item.containsNewUserKeyword && item.messageDay === today),
-    [platformMessages, today],
-  )
-
   const filteredMessages = useMemo(() => {
     const searchText = normalizeForSearch(search.trim())
     return platformMessages.filter((item) => {
-      const matchesView = viewFilter === 'all'
-        || (viewFilter === 'today' && item.messageDay === today)
-        || (viewFilter === 'new-user' && item.containsNewUserKeyword)
-        || (viewFilter === 'today-new-user' && item.messageDay === today && item.containsNewUserKeyword)
+      const matchesView = viewFilter === 'all' || item.messageDay === today
       const searchableText = normalizeForSearch([
         item.text,
         ...(item.detectedCodes || []),
@@ -605,21 +622,6 @@ export default function TelegramCodesPage({ user = null }) {
 
   return (
     <>
-      <section className="telegram-page-heading">
-        <div>
-          <Title level={2}>Mã giảm giá</Title>
-          <Paragraph type="secondary">
-            {user?.uid
-              ? 'Theo dõi ưu đãi từ các kênh công khai và kênh dành cho tài khoản đăng nhập.'
-              : 'Theo dõi ưu đãi từ kênh công khai. Đăng nhập để xem thêm kênh riêng.'}
-          </Paragraph>
-        </div>
-        <div className="telegram-summary" aria-label="Thống kê mã giảm giá">
-          <div><strong>{platformMessages.length}</strong><span>Tin trong 5 ngày</span></div>
-          <div><strong>{newUserMessagesToday.length}</strong><span>Người mới hôm nay</span></div>
-        </div>
-      </section>
-
       {user?.uid && (
         <section className={`telegram-sync-status is-${syncView.state}`} aria-label="Trạng thái đồng bộ GitHub Actions">
           <div className="telegram-sync-status-main">
@@ -700,7 +702,7 @@ export default function TelegramCodesPage({ user = null }) {
             <Title level={4}>Danh sách ưu đãi</Title>
             <Text type="secondary">Dữ liệu được giữ trong 5 ngày và cập nhật tự động.</Text>
           </div>
-          <Text type="secondary">{filteredMessages.length} kết quả</Text>
+          <Text type="secondary">{filteredMessages.length} kết quả · {platformMessages.length} tin trong 5 ngày</Text>
         </div>
         <div className={`telegram-toolbar ${user?.uid ? '' : 'is-guest'}`}>
           {user?.uid && (
@@ -736,8 +738,6 @@ export default function TelegramCodesPage({ user = null }) {
               options={[
                 { value: 'today', label: 'Hôm nay' },
                 { value: 'all', label: '5 ngày gần đây' },
-                { value: 'today-new-user', label: 'Người mới hôm nay' },
-                { value: 'new-user', label: 'Người mới trong 5 ngày' },
               ]}
             />
           </label>

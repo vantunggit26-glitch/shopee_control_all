@@ -1345,6 +1345,119 @@
   margin: 0;
 }
 
+.voucher-mode-picker {
+  display: grid;
+  gap: 5px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: #596472;
+}
+
+.website-voucher-panel .ant-card-body {
+  padding: 20px;
+}
+
+.website-voucher-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.website-voucher-heading .ant-typography {
+  margin: 0;
+}
+
+.website-voucher-filters {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) minmax(130px, 1fr) minmax(180px, 2fr);
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.website-voucher-section {
+  margin-top: 20px;
+}
+
+.website-voucher-section > .ant-pagination {
+  margin-top: 14px;
+  justify-content: flex-end;
+}
+
+.website-voucher-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 245px), 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.website-voucher-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #dfe2e6;
+  border-radius: 8px;
+}
+
+.website-voucher-platform {
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: #edf0f3;
+  color: #374151;
+  font-size: 12px;
+}
+
+.website-voucher-amount {
+  font-size: 21px;
+  color: #20242b;
+}
+
+.website-voucher-card p,
+.website-voucher-feed p {
+  margin: 6px 0 10px;
+  overflow-wrap: anywhere;
+}
+
+.website-voucher-card-footer,
+.website-voucher-feed-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  font-size: 12px;
+}
+
+.website-voucher-card-footer {
+  margin-top: auto;
+}
+
+.website-voucher-feed {
+  margin-top: 10px;
+  border-top: 1px solid #dfe2e6;
+}
+
+.website-voucher-feed article {
+  padding: 13px 0;
+  border-bottom: 1px solid #e8eaed;
+}
+
+@media (max-width: 600px) {
+  .website-voucher-panel .ant-card-body {
+    padding: 14px;
+  }
+
+  .website-voucher-filters {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .website-voucher-filters > :last-child {
+    grid-column: 1 / -1;
+  }
+}
+
 .telegram-summary {
   display: flex;
   align-items: stretch;
