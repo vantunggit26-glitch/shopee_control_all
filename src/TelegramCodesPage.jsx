@@ -38,6 +38,14 @@ const FILTER_KEYWORDS = [
   'Mã giảm 100K',
   '80K đơn từ 0Đ',
   '100K đơn từ 0Đ',
+  '80K/0Đ',
+  '100K/0Đ',
+  '75K/0Đ',
+  '85K/0Đ',
+  '90K/0Đ',
+  '95K/0Đ',
+  '120K/0Đ',
+  '110K/0Đ',
 ]
 const filterKeyword = FILTER_KEYWORDS[0]
 const MESSAGE_QUERY_LIMIT = 1000
