@@ -1,3 +1,5 @@
+import { handleVoucherAlerts } from './voucher-alerts.js'
+
 export const SOURCE_URL = 'https://vouchersan.com/ma-hot/'
 const FEED_URL = 'https://vouchersan.com/wp-json/vs-tg/v1/feed?limit=100&type=all'
 const RETENTION_SECONDS = 5 * 24 * 60 * 60
@@ -168,7 +170,18 @@ export default {
     const origin = request.headers.get('Origin')
     const headers = { 'Cache-Control': 'no-store', Vary: 'Origin' }
     if (ALLOWED_ORIGINS.has(origin)) headers['Access-Control-Allow-Origin'] = origin
-    if (request.method !== 'GET' || new URL(request.url).pathname !== '/vouchers') {
+    const path = new URL(request.url).pathname
+    if (path === '/voucher-alerts' || path.startsWith('/voucher-alerts/')) {
+      if (request.method === 'OPTIONS' && headers['Access-Control-Allow-Origin']) {
+        return new Response(null, { status: 204, headers: {
+          ...headers,
+          'Access-Control-Allow-Methods': 'GET, PUT, POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+        } })
+      }
+      return handleVoucherAlerts(request, env, headers)
+    }
+    if (request.method !== 'GET' || path !== '/vouchers') {
       return Response.json({ error: 'Not found' }, { status: 404, headers })
     }
     if (origin && !ALLOWED_ORIGINS.has(origin)) {

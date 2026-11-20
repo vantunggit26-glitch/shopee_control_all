@@ -2,10 +2,15 @@
   "name": "shopee-website-vouchers",
   "main": "src/index.js",
   "compatibility_date": "2026-11-19",
+  "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "preview_urls": false,
   "triggers": { "crons": ["2,22,42 * * * *"] },
   "observability": { "enabled": true },
+  "vars": {
+    "FIREBASE_PROJECT_ID": "account-vault-tung",
+    "FIREBASE_WEB_API_KEY": "AIzaSyD53nJqEn-nfHpc4V_gQCl_4qH_mMzNomE"
+  },
   "kv_namespaces": [
     { "binding": "VOUCHER_HISTORY", "id": "a68bf38bdd0e458980c8e74985607514" }
   ]

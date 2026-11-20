@@ -4,6 +4,7 @@ import { ExportOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icon
 import { VoucherSaveButton } from './SavedVouchers'
 import { voucherBookmark } from './useSavedVouchers'
 import { OFFER_OPTIONS, matchesOfferFilter, uniqueVouchers, voucherExpiry, voucherText } from './voucherUtils'
+import VoucherAlertSettings from './VoucherAlertSettings'
 
 const { Link, Text, Title } = Typography
 const SOURCE_URL = 'https://vouchersan.com/ma-hot/'
@@ -43,7 +44,7 @@ function OfferLinks({ links, label }) {
   )
 }
 
-export default function WebsiteVouchers({ saved }) {
+export default function WebsiteVouchers({ saved, user }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
@@ -126,13 +127,16 @@ export default function WebsiteVouchers({ saved }) {
             Mở trang Mã hot của VoucherSan <ExportOutlined />
           </Link>
         </div>
-        <Button
-          icon={<ReloadOutlined />}
-          loading={loading}
-          onClick={() => { setLoading(true); setReload((value) => value + 1) }}
-        >
-          Làm mới
-        </Button>
+        <Space wrap>
+          {user?.uid && <VoucherAlertSettings key={user.uid} user={user} workerUrl={WEBSITE_VOUCHERS_URL} />}
+          <Button
+            icon={<ReloadOutlined />}
+            loading={loading}
+            onClick={() => { setLoading(true); setReload((value) => value + 1) }}
+          >
+            Làm mới
+          </Button>
+        </Space>
       </div>
       {!!statuses.length && (
         <div className="website-source-status" aria-label="Trạng thái đồng bộ Website">

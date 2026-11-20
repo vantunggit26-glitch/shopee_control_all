@@ -295,7 +295,7 @@ export default function TelegramCodesPage({ user = null }) {
         </div>
       </section>
       {showSaved && saved ? <SavedVouchers saved={saved} /> : mode === 'website'
-        ? <WebsiteVouchers saved={saved} /> : <TelegramVouchers key={user?.uid || 'guest'} user={user} saved={saved} />}
+        ? <WebsiteVouchers saved={saved} user={user} /> : <TelegramVouchers key={user?.uid || 'guest'} user={user} saved={saved} />}
     </>
   )
 }
