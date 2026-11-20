@@ -1415,12 +1415,11 @@
 
 .voucher-alert-connection {
   border-top: 1px solid #e8eaed;
-  padding-top: 12px;
 }
 
 .voucher-alert-connection ol {
   padding-left: 20px;
-  margin: 6px 0 12px;
+  margin: 0 0 12px;
 }
 
 .website-voucher-filters {

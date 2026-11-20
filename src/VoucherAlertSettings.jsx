@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Alert, App, Button, Form, Input, Modal, Select, Space, Switch, Typography } from 'antd'
+import { Alert, App, Button, Collapse, Form, Input, Modal, Select, Space, Switch, Typography } from 'antd'
 import { BellOutlined, CopyOutlined } from '@ant-design/icons'
 
 const gmail = /^[\w.+-]+@(?:gmail|googlemail)\.com$/i
@@ -12,6 +12,7 @@ export default function VoucherAlertSettings({ user, workerUrl }) {
   const [pending, setPending] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [saved, setSaved] = useState(null)
+  const [connectionOpen, setConnectionOpen] = useState(false)
   const [code, setCode] = useState('')
   const [error, setError] = useState('')
 
@@ -36,6 +37,7 @@ export default function VoucherAlertSettings({ user, workerUrl }) {
     setPending('load')
     setLoaded(false)
     setSaved(null)
+    setConnectionOpen(false)
     setCode('')
     setError('')
     try {
@@ -57,7 +59,7 @@ export default function VoucherAlertSettings({ user, workerUrl }) {
       const result = await request('PUT', '', values)
       setSaved(result.settings)
       form.setFieldsValue(result.settings)
-      if (result.connectionCode) setCode(result.connectionCode)
+      if (result.connectionCode) showConnectionCode(result.connectionCode)
       message.success('Đã lưu thông báo.')
     } catch (err) {
       setError(err.message || 'Không lưu được thông báo.')
@@ -71,12 +73,17 @@ export default function VoucherAlertSettings({ user, workerUrl }) {
     setError('')
     try {
       const result = await request('POST', '/connect')
-      setCode(result.connectionCode)
+      showConnectionCode(result.connectionCode)
     } catch (err) {
       setError(err.message || 'Không tạo được mã kết nối.')
     } finally {
       setPending('')
     }
+  }
+
+  function showConnectionCode(connectionCode) {
+    setCode(connectionCode)
+    setConnectionOpen(true)
   }
 
   async function copyCode() {
@@ -129,28 +136,43 @@ export default function VoucherAlertSettings({ user, workerUrl }) {
           </Form.Item>
         </Form>
         {saved && (
-          <div className="voucher-alert-connection">
-            <Text strong>Kết nối Apps Script một lần</Text>
-            <ol>
-              <li>Thay mã trong tệp Apps Script hiện có bằng <Link href="/voucher-alerts.gs" download>Tải mã Apps Script</Link>.</li>
-              <li>Trong <strong>Cài đặt dự án → Thuộc tính tập lệnh</strong>, thêm <Text code>ACCOUNT_VAULT_ALERT_CODE</Text> với giá trị là mã kết nối.</li>
-              <li>Lưu rồi chạy hàm <Text code>installAlerts</Text>. Hàm giữ lại lịch <Text code>checkVouchers</Text> nếu đã có.</li>
-            </ol>
-            <Space direction="vertical" style={{ width: '100%' }}>
-              {code && (
+          <Collapse
+            className="voucher-alert-connection"
+            ghost
+            size="small"
+            activeKey={connectionOpen ? ['connection'] : []}
+            onChange={(keys) => setConnectionOpen(keys.includes('connection'))}
+            items={[{
+              key: 'connection',
+              label: 'Cài đặt kết nối',
+              children: (
                 <>
-                  <Text type="secondary">Sao chép mã trước khi đóng. Chỉ dán mã vào dự án Apps Script của bạn.</Text>
-                  <Space.Compact style={{ width: '100%' }}>
-                    <Input.Password value={code} readOnly aria-label="Mã kết nối Apps Script" />
-                    <Button icon={<CopyOutlined />} onClick={copyCode}>Sao chép</Button>
-                  </Space.Compact>
+                  <ol>
+                    <li>Thay mã trong tệp Apps Script hiện có bằng <Link href="/voucher-alerts.gs" download>Tải mã Apps Script</Link>.</li>
+                    <li>Trong <strong>Cài đặt dự án → Thuộc tính tập lệnh</strong>, thêm <Text code>ACCOUNT_VAULT_ALERT_CODE</Text> với giá trị là mã kết nối.</li>
+                    <li>Lưu rồi chạy hàm <Text code>installAlerts</Text>. Hàm giữ lại lịch <Text code>checkVouchers</Text> nếu đã có.</li>
+                  </ol>
+                  <Space direction="vertical" style={{ width: '100%' }}>
+                    {code ? (
+                      <>
+                        <Text type="secondary">Sao chép mã trước khi đóng. Chỉ dán mã vào dự án Apps Script của bạn.</Text>
+                        <Space.Compact style={{ width: '100%' }}>
+                          <Input.Password value={code} readOnly aria-label="Mã kết nối Apps Script" />
+                          <Button icon={<CopyOutlined />} onClick={copyCode}>Sao chép</Button>
+                        </Space.Compact>
+                      </>
+                    ) : (
+                      <>
+                        <Button size="small" onClick={renewCode} loading={pending === 'connect'}
+                          disabled={Boolean(pending)}>Cấp lại mã kết nối</Button>
+                        <Text type="secondary">Khi cấp lại mã, hãy thay mã trong Apps Script.</Text>
+                      </>
+                    )}
+                  </Space>
                 </>
-              )}
-              {!code && <Button size="small" onClick={renewCode} loading={pending === 'connect'}
-                disabled={Boolean(pending)}>Cấp lại mã kết nối</Button>}
-              {!code && <Text type="secondary">Khi cấp lại mã, hãy thay mã trong Apps Script.</Text>}
-            </Space>
-          </div>
+              ),
+            }]}
+          />
         )}
       </Modal>
     </>

@@ -84,3 +84,32 @@ function checkVouchers() {
     lock.releaseLock();
   }
 }
+
+// Manual test only: use the full available feed without changing the scheduled job's state.
+function sendLatestVoucherTest() {
+  const settings = loadVoucherSettings_(PropertiesService.getScriptProperties());
+  const { feed } = readVoucherJson_('/vouchers');
+  if (!Array.isArray(feed)) throw new Error('Chưa đọc được Tin ưu đãi.');
+
+  const normalize = value => String(value || '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+  const keyword = normalize(settings.keyword);
+  let latest;
+  for (const item of feed) {
+    if (item?.id && Number.isFinite(item.publishedAt) && normalize(item.title).includes(keyword)
+      && (!latest || item.publishedAt > latest.publishedAt)) latest = item;
+  }
+  if (!latest) {
+    console.log(`Không tìm thấy tin chứa “${settings.keyword}”. Không gửi email.`);
+    return;
+  }
+  if (MailApp.getRemainingDailyQuota() < settings.emails.length) {
+    throw new Error('Hạn mức gửi email còn lại không đủ cho danh sách Gmail đã lưu.');
+  }
+
+  const links = (latest.links || []).filter(url => /^https:\/\//i.test(url));
+  const body = ['Đây là email gửi thử với tin khớp gần nhất:', '', latest.title, ...links].join('\n');
+  for (const email of settings.emails) {
+    MailApp.sendEmail(email, `[Account Vault] Gửi thử: ${settings.keyword}`, body);
+  }
+  console.log(`Đã gửi thử tin mới nhất tới ${settings.emails.length} địa chỉ Gmail.`);
+}
